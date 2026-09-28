@@ -1,0 +1,15 @@
+[Unit]
+Description=yue GPU job agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/yue.env
+ExecStart=/usr/bin/python3 -u /opt/yue/app/worker/agent.py
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/yue-agent.log
+StandardError=append:/var/log/yue-agent.log
+
+[Install]
+WantedBy=multi-user.target

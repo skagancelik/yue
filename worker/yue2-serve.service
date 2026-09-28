@@ -1,0 +1,14 @@
+[Unit]
+Description=YuE2-Turbo inference service
+After=network-online.target
+
+[Service]
+EnvironmentFile=/opt/yue/app/worker/turbo.env
+EnvironmentFile=/opt/yue/secret.env
+WorkingDirectory=/opt/yue/turbo
+ExecStart=/opt/yue/turbo/.venv/bin/yue2-serve
+Restart=on-failure
+RestartSec=10
+LimitNOFILE=65536
+StandardOutput=append:/var/log/yue2-serve.log
+StandardError=append:/var/log/yue2-serve.log

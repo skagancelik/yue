@@ -1,0 +1,296 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  yue (YuE2 cover studio) bootstrap. Deployed once with an admin session.
+  Creates the Terraform state bucket, a permissions boundary for app roles,
+  a scoped management policy, the GitHub Actions OIDC deploy role and the
+  local yue-ops role (assumable by user/claude-ops).
+
+Parameters:
+  GitHubRepo:
+    Type: String
+    Default: skagancelik/yue
+  ExistingOidcProviderArn:
+    Type: String
+    Default: ""
+    Description: Leave empty to create token.actions.githubusercontent.com provider.
+  OpsPrincipalArn:
+    Type: String
+    Default: arn:aws:iam::730335425452:user/claude-ops
+
+Conditions:
+  CreateOidc: !Equals [!Ref ExistingOidcProviderArn, ""]
+
+Resources:
+  GitHubOidc:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateOidc
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+      Tags: [{Key: Project, Value: yue}]
+
+  StateBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName: !Sub yue-tfstate-${AWS::AccountId}
+      VersioningConfiguration: {Status: Enabled}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags: [{Key: Project, Value: yue}]
+
+  # Upper bound for every role Terraform creates (Lambda + EC2 instance role).
+  AppBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: yue-app-boundary
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: Data
+            Effect: Allow
+            Action: [s3:*, dynamodb:*]
+            Resource:
+              - arn:aws:s3:::yue-*
+              - arn:aws:s3:::yue-*/*
+              - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/yue-*
+          - Sid: Params
+            Effect: Allow
+            Action: [ssm:GetParameter, ssm:GetParameters]
+            Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/yue/*
+          - Sid: ControlGpu
+            Effect: Allow
+            Action: [ec2:StartInstances, ec2:StopInstances, ec2:ModifyInstanceAttribute]
+            Resource: "*"
+            Condition: {StringEquals: {"aws:ResourceTag/Project": yue}}
+          - Sid: Read
+            Effect: Allow
+            Action: [ec2:DescribeInstances, ec2:DescribeInstanceStatus, sts:GetCallerIdentity]
+            Resource: "*"
+          - Sid: Logs
+            Effect: Allow
+            Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+            Resource: "*"
+          - Sid: SsmAgent
+            Effect: Allow
+            Action:
+              - ssm:UpdateInstanceInformation
+              - ssm:ListInstanceAssociations
+              - ssm:DescribeInstanceProperties
+              - ssm:DescribeDocumentParameters
+              - ssm:GetDocument
+              - ssmmessages:*
+              - ec2messages:*
+            Resource: "*"
+
+  ManagePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: yue-manage
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ReadEverywhere
+            Effect: Allow
+            Action:
+              - ec2:Describe*
+              - ec2:GetInstanceMetadataDefaults
+              - ec2:GetEbsEncryptionByDefault
+              - ec2:GetEbsDefaultKmsKeyId
+              - sts:GetCallerIdentity
+              - servicequotas:GetServiceQuota
+              - servicequotas:ListRequestedServiceQuotaChangeHistory*
+              - logs:DescribeLogGroups
+              - cloudfront:List*
+              - cloudfront:Get*
+              - ssm:DescribeInstanceInformation
+              - ssm:GetCommandInvocation
+              - ssm:ListCommandInvocations
+              - ssm:ListCommands
+            Resource: "*"
+          - Sid: QuotaRequest
+            Effect: Allow
+            Action: servicequotas:RequestServiceQuotaIncrease
+            Resource: "*"
+          - Sid: Ec2CreateTagged
+            Effect: Allow
+            Action:
+              - ec2:CreateVpc
+              - ec2:CreateSubnet
+              - ec2:CreateInternetGateway
+              - ec2:CreateRouteTable
+              - ec2:CreateSecurityGroup
+              - ec2:CreateVolume
+              - ec2:RunInstances
+            Resource: "*"
+            Condition: {StringEquals: {"aws:RequestTag/Project": yue}}
+          - Sid: Ec2TagOnCreate
+            Effect: Allow
+            Action: ec2:CreateTags
+            Resource: "*"
+            Condition:
+              StringEquals:
+                "aws:RequestTag/Project": yue
+                "ec2:CreateAction":
+                  [CreateVpc, CreateSubnet, CreateInternetGateway, CreateRouteTable,
+                   CreateSecurityGroup, CreateVolume, RunInstances]
+          - Sid: Ec2ManageTagged
+            Effect: Allow
+            Action: ec2:*
+            Resource: "*"
+            Condition: {StringEquals: {"aws:ResourceTag/Project": yue}}
+          - Sid: Ec2RunUntaggedParts
+            Effect: Allow
+            Action: ec2:RunInstances
+            Resource:
+              - !Sub arn:aws:ec2:${AWS::Region}::image/*
+              - !Sub arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:network-interface/*
+              - !Sub arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:volume/*
+              - !Sub arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:key-pair/*
+          - Sid: S3
+            Effect: Allow
+            Action: s3:*
+            Resource: [arn:aws:s3:::yue-*, arn:aws:s3:::yue-*/*]
+          - Sid: Dynamo
+            Effect: Allow
+            Action: dynamodb:*
+            Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/yue-*
+          - Sid: Lambda
+            Effect: Allow
+            Action: lambda:*
+            Resource: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:yue-*
+          - Sid: LambdaRead
+            Effect: Allow
+            Action: [lambda:GetAccountSettings, lambda:ListFunctions]
+            Resource: "*"
+          - Sid: CloudFront
+            Effect: Allow
+            Action:
+              - cloudfront:CreateDistribution*
+              - cloudfront:UpdateDistribution
+              - cloudfront:DeleteDistribution
+              - cloudfront:TagResource
+              - cloudfront:UntagResource
+              - cloudfront:CreateInvalidation
+              - cloudfront:*OriginAccessControl*
+              - cloudfront:*CachePolicy*
+              - cloudfront:*OriginRequestPolicy*
+            Resource: "*"
+          - Sid: Params
+            Effect: Allow
+            Action: ssm:*
+            Resource:
+              - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/yue/*
+          - Sid: RunCommandOnGpu
+            Effect: Allow
+            Action: [ssm:SendCommand, ssm:StartSession]
+            Resource: !Sub arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/*
+            Condition: {StringEquals: {"aws:ResourceTag/Project": yue}}
+          - Sid: RunCommandDocs
+            Effect: Allow
+            Action: [ssm:SendCommand, ssm:StartSession]
+            Resource:
+              - !Sub arn:aws:ssm:${AWS::Region}::document/AWS-RunShellScript
+              - !Sub arn:aws:ssm:${AWS::Region}::document/SSM-SessionManagerRunShell
+          - Sid: SessionsSelf
+            Effect: Allow
+            Action: [ssm:TerminateSession, ssm:ResumeSession]
+            Resource: "*"
+          - Sid: Logs
+            Effect: Allow
+            Action: logs:*
+            Resource:
+              - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/yue-*
+              - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/yue-*:*
+              - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/yue/*
+              - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/yue/*:*
+          - Sid: Events
+            Effect: Allow
+            Action: events:*
+            Resource: !Sub arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/yue-*
+          - Sid: Budgets
+            Effect: Allow
+            Action: budgets:*
+            Resource: !Sub arn:aws:budgets::${AWS::AccountId}:budget/yue-*
+          - Sid: BudgetsRead
+            Effect: Allow
+            Action: [budgets:ViewBudget, budgets:DescribeBudgets]
+            Resource: "*"
+          # App roles live under /yue/app/ and must carry the boundary.
+          - Sid: IamCreateBounded
+            Effect: Allow
+            Action: [iam:CreateRole, iam:PutRolePermissionsBoundary, iam:PutRolePolicy, iam:AttachRolePolicy]
+            Resource: !Sub arn:aws:iam::${AWS::AccountId}:role/yue/app/*
+            Condition:
+              StringEquals:
+                iam:PermissionsBoundary: !Ref AppBoundary
+          - Sid: IamManageAppRoles
+            Effect: Allow
+            Action:
+              - iam:GetRole
+              - iam:GetRolePolicy
+              - iam:ListRolePolicies
+              - iam:ListAttachedRolePolicies
+              - iam:ListInstanceProfilesForRole
+              - iam:DeleteRole
+              - iam:DeleteRolePolicy
+              - iam:DetachRolePolicy
+              - iam:TagRole
+              - iam:UntagRole
+              - iam:UpdateAssumeRolePolicy
+              - iam:PassRole
+            Resource: !Sub arn:aws:iam::${AWS::AccountId}:role/yue/app/*
+          - Sid: IamInstanceProfiles
+            Effect: Allow
+            Action: iam:*InstanceProfile*
+            Resource: !Sub arn:aws:iam::${AWS::AccountId}:instance-profile/yue/*
+          - Sid: DenyBoundaryRemoval
+            Effect: Deny
+            Action: iam:DeleteRolePermissionsBoundary
+            Resource: "*"
+
+  GitHubDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: yue-github-deploy
+      MaxSessionDuration: 3600
+      ManagedPolicyArns: [!Ref ManagePolicy]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - CreateOidc
+                - !Ref GitHubOidc
+                - !Ref ExistingOidcProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:ref:refs/heads/main
+      Tags: [{Key: Project, Value: yue}]
+
+  OpsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: yue-ops
+      MaxSessionDuration: 14400
+      ManagedPolicyArns: [!Ref ManagePolicy]
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {AWS: !Ref OpsPrincipalArn}
+            Action: sts:AssumeRole
+      Tags: [{Key: Project, Value: yue}]
+
+Outputs:
+  DeployRoleArn: {Value: !GetAtt GitHubDeployRole.Arn}
+  OpsRoleArn: {Value: !GetAtt OpsRole.Arn}
+  StateBucket: {Value: !Ref StateBucket}
+  BoundaryArn: {Value: !Ref AppBoundary}

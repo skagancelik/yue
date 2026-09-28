@@ -1,0 +1,69 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-central-1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::730335425452:role/yue-github-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.13"
+          terraform_wrapper: false
+
+      - name: Lint
+        run: |
+          python3 -m py_compile api/handler.py worker/agent.py
+          bash -n worker/setup.sh worker/boot.sh
+          node --check web/app.js
+
+      - name: Terraform apply
+        working-directory: infra
+        run: |
+          terraform init -input=false
+          terraform apply -input=false -auto-approve
+          echo "BUCKET=$(terraform output -raw bucket)" >> "$GITHUB_ENV"
+          echo "DIST=$(terraform output -raw distribution_id)" >> "$GITHUB_ENV"
+          echo "URL=$(terraform output -raw url)" >> "$GITHUB_ENV"
+          echo "INSTANCE=$(terraform output -raw instance_id)" >> "$GITHUB_ENV"
+
+      - name: Publish web
+        run: |
+          aws s3 sync web/ "s3://$BUCKET/web/" --delete --cache-control "no-cache"
+          aws cloudfront create-invalidation --distribution-id "$DIST" --paths "/*" >/dev/null
+          echo "### Studio: $URL" >> "$GITHUB_STEP_SUMMARY"
+
+      # A running, idle GPU picks up new worker code right away; otherwise it
+      # pulls from GitHub on its next boot.
+      - name: Refresh idle worker
+        run: |
+          state=$(aws ec2 describe-instances --instance-ids "$INSTANCE" --query 'Reservations[0].Instances[0].State.Name' --output text)
+          worker=$(aws dynamodb get-item --table-name yue-jobs --key '{"id":{"S":"__worker__"}}' --query 'Item.state.S' --output text)
+          if [ "$state" = "running" ] && [ "$worker" = "ready" ]; then
+            aws ssm send-command --instance-ids "$INSTANCE" --document-name AWS-RunShellScript \
+              --parameters 'commands=["git -C /opt/yue/app fetch --depth 1 origin main","git -C /opt/yue/app reset --hard origin/main","bash /opt/yue/app/worker/boot.sh"]' >/dev/null
+            echo "worker refreshed"
+          else
+            echo "GPU $state / worker $worker: skip (code is pulled on next boot)"
+          fi
