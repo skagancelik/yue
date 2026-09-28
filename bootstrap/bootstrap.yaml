@@ -110,6 +110,7 @@ Resources:
               - cloudfront:List*
               - cloudfront:Get*
               - ssm:DescribeInstanceInformation
+              - ssm:DescribeParameters
               - ssm:GetCommandInvocation
               - ssm:ListCommandInvocations
               - ssm:ListCommands
