@@ -5,6 +5,7 @@ agent on the instance stops it after YUE_IDLE_MINUTES without work, and the
 janitor (every 5 min) is the safety net for both directions.
 """
 import base64
+from decimal import Decimal
 import hmac
 import json
 import os
@@ -65,8 +66,8 @@ def response(status, body):
 
 def _json_default(value):
     # DynamoDB returns Decimal
-    if hasattr(value, "is_integer"):
-        return int(value) if value == int(value) else float(value)
+    if isinstance(value, Decimal):
+        return int(value) if value == value.to_integral_value() else float(value)
     raise TypeError(type(value))
 
 
@@ -252,7 +253,7 @@ def create_jobs(body):
         raise HttpError(400, "variants 1 veya 2 olmalı")
     seed = body.get("seed")
     if seed is None:
-        seed = int.from_bytes(os.urandom(4), "big")
+        seed = int.from_bytes(os.urandom(4), "big") & 0x7FFFFFFF
     if not isinstance(seed, int) or not 0 <= seed < 2**31:
         raise HttpError(400, "seed 0 ile 2^31 arasında bir tam sayı olmalı")
 
