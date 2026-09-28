@@ -9,6 +9,9 @@ Parameters:
   GitHubRepo:
     Type: String
     Default: skagancelik/yue
+  GitHubRepoImmutable:
+    Type: String
+    Default: skagancelik@8735689/yue@1393436925
   ExistingOidcProviderArn:
     Type: String
     Default: ""
@@ -272,7 +275,10 @@ Resources:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:ref:refs/heads/main
+                token.actions.githubusercontent.com:sub:
+                  - !Sub repo:${GitHubRepo}:ref:refs/heads/main
+                  # immutable subject format (owner@id/repo@id), enabled on this repo
+                  - !Sub repo:${GitHubRepoImmutable}:ref:refs/heads/main
       Tags: [{Key: Project, Value: yue}]
 
   OpsRole:
