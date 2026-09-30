@@ -183,6 +183,18 @@ Resources:
               - cloudfront:*CachePolicy*
               - cloudfront:*OriginRequestPolicy*
             Resource: "*"
+          # CloudFront viewer certificates must live in us-east-1.
+          - Sid: AcmCloudFrontCert
+            Effect: Allow
+            Action:
+              - acm:RequestCertificate
+              - acm:DescribeCertificate
+              - acm:DeleteCertificate
+              - acm:ListTagsForCertificate
+              - acm:AddTagsToCertificate
+              - acm:RemoveTagsFromCertificate
+            Resource: "*"
+            Condition: {StringEquals: {"aws:RequestedRegion": us-east-1}}
           - Sid: Params
             Effect: Allow
             Action: ssm:*

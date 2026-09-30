@@ -77,3 +77,12 @@ resource "aws_s3_bucket_policy" "studio" {
     }]
   })
 }
+
+# studio.serkanify.com: the certificate is free; DNS lives at the domain's own
+# provider (no Route 53), so validation CNAMEs are added by hand.
+resource "aws_acm_certificate" "studio" {
+  provider          = aws.us_east_1
+  domain_name       = "studio.serkanify.com"
+  validation_method = "DNS"
+  lifecycle { create_before_destroy = true }
+}

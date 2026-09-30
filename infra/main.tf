@@ -18,6 +18,13 @@ provider "aws" {
   default_tags { tags = { Project = "yue" } }
 }
 
+# CloudFront only accepts ACM certificates issued in us-east-1.
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+  default_tags { tags = { Project = "yue" } }
+}
+
 variable "region" { default = "eu-central-1" }
 variable "az" { default = "eu-central-1b" }
 variable "gpu_instance_type" { default = "g6.2xlarge" }
@@ -53,3 +60,10 @@ output "url" { value = "https://${aws_cloudfront_distribution.web.domain_name}" 
 output "instance_id" { value = aws_instance.gpu.id }
 output "bucket" { value = aws_s3_bucket.studio.bucket }
 output "distribution_id" { value = aws_cloudfront_distribution.web.id }
+output "cert_validation_cname" {
+  value = [for o in aws_acm_certificate.studio.domain_validation_options : {
+    name  = o.resource_record_name
+    type  = o.resource_record_type
+    value = o.resource_record_value
+  }]
+}
