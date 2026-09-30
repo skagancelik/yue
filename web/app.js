@@ -78,7 +78,7 @@ function activeTab() {
 
 function setView(next) {
   view = { tab: view.tab, ...next };
-  closeFolderMenu();
+  closeMenus();
   if (view.type === "folder" && view.id && view.id !== UNFILED) lastFolderId = view.id;
   try { localStorage.setItem("yue.view", JSON.stringify(view)); } catch (_) {}
   if (source && source.folder_id && (!currentFolder() || source.folder_id !== view.id)) clearSource();
@@ -135,17 +135,12 @@ $("first-folder").addEventListener("submit", (event) => {
   $("first-folder-name").value = "";
 });
 
-function closeFolderMenu() {
-  $("folder-menu-list").classList.add("hidden");
-  $("folder-menu-btn").setAttribute("aria-expanded", "false");
-}
 $("folder-menu-btn").addEventListener("click", (event) => {
   event.stopPropagation();
+  closeMenus($("folder-menu-list"));
   const open = $("folder-menu-list").classList.toggle("hidden") === false;
   $("folder-menu-btn").setAttribute("aria-expanded", String(open));
 });
-document.addEventListener("click", closeFolderMenu);
-document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeFolderMenu(); });
 
 $("folder-rename").addEventListener("click", async () => {
   const folder = currentFolder();
@@ -557,8 +552,6 @@ function render() {
 function renderJobs() {
   const container = $("jobs");
   const list = visibleJobs();
-  const playing = new Map();
-  container.querySelectorAll("audio.player").forEach((a) => { if (!a.paused) playing.set(a.dataset.id, a); });
   $("empty").classList.toggle("hidden", list.length > 0);
   $("lib-count").textContent = list.length ? `${list.length} kayıt` : "";
   $("jobs-count").textContent = view.type === "folder" && currentFolder() ? (list.length || "") : "";
@@ -568,22 +561,151 @@ function renderJobs() {
   for (const job of list) {
     let node = existing.get(job.id);
     if (!node) node = $("job-tpl").content.firstElementChild.cloneNode(true);
-    fillJob(node, job, playing.has(job.id));
+    fillJob(node, job);
     fragment.appendChild(node);
   }
   container.replaceChildren(fragment);
+  syncPlayIcons();
+  updatePlayerBar();
 }
 
-function fillJob(node, job, isPlaying) {
+function menuOpen(menu) { return !menu.classList.contains("hidden"); }
+
+function closeMenus(except) {
+  document.querySelectorAll(".menu").forEach((menu) => {
+    if (menu === except) return;
+    menu.classList.add("hidden");
+    const button = menu.parentElement.querySelector(".menu-btn");
+    if (button) button.setAttribute("aria-expanded", "false");
+  });
+}
+document.addEventListener("click", () => closeMenus());
+document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeMenus(); });
+
+function menuItem(label, onClick, cls = "") {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "menu-item " + cls;
+  button.textContent = label;
+  button.onclick = onClick;
+  return button;
+}
+
+function menuLabel(text) {
+  const label = document.createElement("div");
+  label.className = "menu-label";
+  label.textContent = text;
+  return label;
+}
+
+function buildJobMenu(node, job, active) {
+  const menu = node.querySelector(".job-menu");
+  const button = node.querySelector(".job-menu-btn");
+  button.onclick = (event) => {
+    event.stopPropagation();
+    closeMenus(menu);
+    const open = menu.classList.toggle("hidden") === false;
+    button.setAttribute("aria-expanded", String(open));
+  };
+  if (menuOpen(menu)) return;   // do not rebuild under the user's cursor
+  const items = [];
+  const downloads = [
+    ["Şarkı · MP3", job.mp3_download], ["Şarkı · FLAC", job.flac_download],
+    ["Altyapı · MP3", job.instrumental_mp3_download], ["Altyapı · FLAC", job.instrumental_download],
+    ["Vokal · FLAC", job.vocals_download], ["Nota (ABC)", job.abc_download],
+  ].filter(([, url]) => url);
+  if (downloads.length) {
+    items.push(menuLabel("İndir"));
+    for (const [label, url] of downloads) {
+      const link = document.createElement("a");
+      link.className = "menu-item";
+      link.href = url;
+      link.rel = "noopener";
+      link.textContent = "⬇ " + label;
+      items.push(link);
+    }
+  }
+  items.push(menuItem("↻ Tekrar kullan", () => reuse(job)));
+  const targets = folders.filter((f) => f.id !== job.folder_id);
+  if (targets.length) {
+    items.push(menuLabel("Klasöre taşı"));
+    for (const folder of targets) {
+      items.push(menuItem(`📁 ${folder.name}`, async () => {
+        try {
+          const updated = await api(`/jobs/${job.id}`, { method: "PATCH", body: JSON.stringify({ folder_id: folder.id }) });
+          jobs = jobs.map((j) => (j.id === job.id ? updated : j));
+          render();
+        } catch (error) { report(error); }
+      }));
+    }
+  }
+  const divider = document.createElement("div");
+  divider.className = "menu-divider";
+  items.push(divider);
+  if (active) {
+    items.push(menuItem("İptal et", async () => { await api(`/jobs/${job.id}/cancel`, { method: "POST" }); refresh(); }, "danger"));
+  } else {
+    items.push(menuItem("🗑 Sil", async () => {
+      if (!confirm(`"${job.title}" silinsin mi?`)) return;
+      try {
+        await api(`/jobs/${job.id}`, { method: "DELETE" });
+        jobs = jobs.filter((j) => j.id !== job.id);
+        render();
+      } catch (error) { report(error); }
+    }, "danger"));
+  }
+  menu.replaceChildren(...items);
+}
+
+function fillNote(node, job) {
+  const line = node.querySelector(".job-note");
+  const area = node.querySelector(".note-editor");
+  const editing = !area.classList.contains("hidden");
+  if (editing) return;
+  line.textContent = job.note || "+ Not ekle";
+  line.classList.toggle("no-note", !job.note);
+  const startEdit = () => {
+    area.value = job.note || "";
+    area.classList.remove("hidden");
+    line.classList.add("hidden");
+    area.focus();
+  };
+  line.onclick = startEdit;
+  line.onkeydown = (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); startEdit(); } };
+  line.classList.remove("hidden");
+  const finish = async (save) => {
+    if (area.classList.contains("hidden")) return;   // already finished (blur fires after we hide the field)
+    const value = area.value.trim();
+    area.classList.add("hidden");
+    line.classList.remove("hidden");
+    if (!save || value === (job.note || "")) return;
+    try {
+      const updated = await api(`/jobs/${job.id}`, { method: "PATCH", body: JSON.stringify({ note: value }) });
+      jobs = jobs.map((j) => (j.id === job.id ? updated : j));
+      render();
+    } catch (error) { report(error); }
+  };
+  area.onkeydown = (event) => {
+    if (event.key === "Escape") { event.stopPropagation(); finish(false); }
+    else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { finish(true); }
+  };
+  area.onblur = () => finish(true);
+}
+
+function fillJob(node, job) {
   node.dataset.id = job.id;
   const h = hue(job.title + job.style);
   node.querySelector(".art").style.background = `linear-gradient(135deg, hsl(${h} 80% 60%), hsl(${(h + 60) % 360} 70% 45%))`;
   node.querySelector(".job-title").textContent = job.title + (job.variant > 1 ? ` · v${job.variant}` : "");
   node.querySelector(".job-style").textContent = job.style;
   node.querySelector(".job-style").title = job.style;
+  const dur = node.querySelector(".dur");
+  dur.textContent = job.duration ? fmtDuration(job.duration) : "";
+  dur.classList.toggle("hidden", !job.duration);
   const badge = node.querySelector(".badge");
   badge.className = `badge ${job.status}`;
   badge.textContent = STATUS_TEXT[job.status] || job.status;
+  badge.classList.toggle("hidden", job.status === "succeeded");   // "Hazır" is the normal state; the duration pill says enough
 
   const folder = folders.find((f) => f.id === job.folder_id);
   const folderLine = node.querySelector(".job-folder");
@@ -620,43 +742,19 @@ function fillJob(node, job, isPlaying) {
     node.querySelector(".stage").textContent = `${stage} · geçen süre ${fmtDuration(elapsed)}`;
   }
 
-  const player = node.querySelector(".player");
-  if (job.mp3_url) {
-    player.classList.remove("hidden");
-    player.dataset.id = job.id;
-    if (!isPlaying && player.dataset.mode !== "stems" && player.dataset.src !== job.id) { player.src = job.mp3_url; player.dataset.src = job.id; }
-  } else {
-    player.classList.add("hidden");
-  }
-  fillDownloads(node, job);
-  fillStems(node, job, isPlaying);
+  const playButton = node.querySelector(".art-play");
+  playButton.classList.toggle("hidden", !job.mp3_url);
+  node.querySelector(".art-note").classList.toggle("hidden", !!job.mp3_url);
+  playButton.onclick = () => playJob(job);
+
+  fillStems(node, job);
+  fillNote(node, job);
+  node.querySelector(".lyrics-btn").onclick = () => openLyrics(job);
 
   const error = node.querySelector(".job-error");
   error.classList.toggle("hidden", !job.error);
   error.textContent = job.error || "";
-  node.querySelector(".cancel").classList.toggle("hidden", !active);
-  node.querySelector(".delete").classList.toggle("hidden", active);
-  const meta = [];
-  if (job.duration) meta.push(fmtDuration(job.duration));
-  meta.push(fmtAgo(job.created_at));
-  node.querySelector(".meta").textContent = meta.join(" · ");
-
-  const move = node.querySelector(".move");
-  const targets = folders.filter((f) => f.id !== job.folder_id);
-  move.classList.toggle("hidden", !targets.length);
-  if (document.activeElement !== move) {
-    move.replaceChildren(new Option("Taşı…", ""), ...targets.map((f) => new Option(`📁 ${f.name}`, f.id)));
-  }
-  move.onchange = async () => {
-    const folderId = move.value;
-    if (!folderId) return;
-    try {
-      const updated = await api(`/jobs/${job.id}`, { method: "PATCH", body: JSON.stringify({ folder_id: folderId }) });
-      jobs = jobs.map((j) => (j.id === job.id ? updated : j));
-      render();
-    } catch (error) { report(error); }
-  };
-
+  node.querySelector(".meta").textContent = fmtAgo(job.created_at);
   node.querySelector(".rename").onclick = async () => {
     const title = prompt("Şarkı adı", job.title);
     if (!title || !title.trim() || title.trim() === job.title) return;
@@ -666,130 +764,12 @@ function fillJob(node, job, isPlaying) {
       render();
     } catch (error) { report(error); }
   };
-
-  const noteLine = node.querySelector(".job-note");
-  const editor = node.querySelector(".note-editor");
-  const area = editor.querySelector("textarea");
-  noteLine.textContent = job.note || "";
-  noteLine.classList.toggle("hidden", !job.note || !editor.classList.contains("hidden"));
-  node.querySelector(".note-btn").textContent = job.note ? "📝 Notu düzenle" : "📝 Not ekle";
-  node.querySelector(".note-btn").onclick = () => {
-    area.value = job.note || "";
-    editor.classList.remove("hidden");
-    noteLine.classList.add("hidden");
-    area.focus();
-  };
-  node.querySelector(".note-cancel").onclick = () => {
-    editor.classList.add("hidden");
-    noteLine.classList.toggle("hidden", !job.note);
-  };
-  node.querySelector(".note-save").onclick = async () => {
-    try {
-      const updated = await api(`/jobs/${job.id}`, { method: "PATCH", body: JSON.stringify({ note: area.value.trim() }) });
-      jobs = jobs.map((j) => (j.id === job.id ? updated : j));
-      editor.classList.add("hidden");
-      render();
-    } catch (error) { report(error); }
-  };
-
-  node.querySelector(".reuse").onclick = () => reuse(job);
-  node.querySelector(".cancel").onclick = async () => { await api(`/jobs/${job.id}/cancel`, { method: "POST" }); refresh(); };
-  node.querySelector(".delete").onclick = async () => {
-    if (!confirm(`"${job.title}" silinsin mi?`)) return;
-    await api(`/jobs/${job.id}`, { method: "DELETE" });
-    jobs = jobs.filter((j) => j.id !== job.id);
-    render();
-  };
+  buildJobMenu(node, job, active);
 }
 
-function fillDownloads(node, job) {
-  const select = node.querySelector(".download");
-  const items = [
-    ["Şarkı · MP3", job.mp3_download], ["Şarkı · FLAC", job.flac_download],
-    ["Altyapı · MP3", job.instrumental_mp3_download], ["Altyapı · FLAC", job.instrumental_download],
-    ["Vokal · FLAC", job.vocals_download], ["Nota (ABC)", job.abc_download],
-  ].filter(([, url]) => url);
-  select.classList.toggle("hidden", !items.length);
-  if (document.activeElement !== select) {
-    select.replaceChildren(new Option("⬇ İndir", ""), ...items.map(([label, url]) => new Option(label, url)));
-  }
-  select.onchange = () => {
-    if (!select.value) return;
-    const link = document.createElement("a");
-    link.href = select.value;
-    link.rel = "noopener";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    select.value = "";
-  };
-}
-
-// Instrumental and vocals play together in sync; each toggle mutes its own stem.
-function mixerFor(node) {
-  if (node._mix) return node._mix;
-  const player = node.querySelector(".player");
-  const mix = { inst: true, voc: true, muted: false, active: false, vocals: new Audio() };
-  mix.vocals.preload = "auto";
-  const expectedMuted = () => (mix.active ? mix.muted || !mix.inst : mix.muted);
-  mix.apply = () => {
-    player.muted = expectedMuted();
-    mix.vocals.muted = mix.muted || !mix.voc;
-    mix.paint();
-  };
-  mix.paint = () => {
-    for (const [cls, on] of [[".toggle.inst", mix.inst], [".toggle.voc", mix.voc]]) {
-      const button = node.querySelector(cls);
-      button.classList.toggle("on", on);
-      button.setAttribute("aria-pressed", String(on));
-    }
-  };
-  const follow = () => {
-    if (mix.active && Math.abs(mix.vocals.currentTime - player.currentTime) > 0.05) mix.vocals.currentTime = player.currentTime;
-  };
-  player.addEventListener("play", () => { if (mix.active) { follow(); mix.vocals.play().catch(() => {}); } });
-  player.addEventListener("playing", () => { if (mix.active) mix.vocals.play().catch(() => {}); });
-  player.addEventListener("pause", () => mix.vocals.pause());
-  player.addEventListener("waiting", () => { if (mix.active) mix.vocals.pause(); });
-  player.addEventListener("ended", () => mix.vocals.pause());
-  player.addEventListener("seeking", follow);
-  player.addEventListener("seeked", follow);
-  player.addEventListener("ratechange", () => { mix.vocals.playbackRate = player.playbackRate; });
-  player.addEventListener("timeupdate", () => {
-    if (mix.active && !player.paused && Math.abs(mix.vocals.currentTime - player.currentTime) > 0.25) mix.vocals.currentTime = player.currentTime;
-  });
-  player.addEventListener("volumechange", () => {
-    mix.vocals.volume = player.volume;
-    if (player.muted !== expectedMuted()) {
-      // The native mute button was used: mute everything, or unmute and bring the instrumental back.
-      mix.muted = player.muted;
-      if (!player.muted && !mix.inst) mix.inst = true;
-      mix.apply();
-    }
-  });
-  node.querySelector(".toggle.inst").onclick = () => { mix.inst = !mix.inst; mix.apply(); };
-  node.querySelector(".toggle.voc").onclick = () => { mix.voc = !mix.voc; mix.apply(); };
-  node._mix = mix;
-  return mix;
-}
-
-function fillStems(node, job, isPlaying) {
+function fillStems(node, job) {
   const state = job.stems_status;
-  const mix = mixerFor(node);
-  const player = node.querySelector(".player");
-  const ready = state === "succeeded" && job.instrumental_url && job.vocals_url;
   const working = state === "queued" || state === "running";
-
-  node.querySelector(".mixer").classList.toggle("hidden", !ready);
-  if (ready && !isPlaying && player.dataset.mode !== "stems") {
-    player.src = job.instrumental_url;
-    mix.vocals.src = job.vocals_url;
-    player.dataset.mode = "stems";
-    mix.active = true;
-    mix.apply();
-  }
-  mix.paint();
-
   node.querySelector(".stems-state").classList.toggle("hidden", !working);
   node.querySelector(".stems-progress").classList.toggle("hidden", !working);
   let status = working ? "Altyapı ve vokal ayrılıyor" : "";
@@ -815,6 +795,158 @@ function fillStems(node, job, isPlaying) {
   error.classList.toggle("hidden", state !== "failed");
   error.textContent = state === "failed" ? `Vokal ayırma başarısız: ${job.stems_error || "bilinmeyen hata"}` : "";
 }
+
+// ---------------------------------------------------------------- lyrics modal
+
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+  return new Promise((resolve, reject) => {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    ok ? resolve() : reject(new Error("kopyalanamadı"));
+  });
+}
+
+let lyricsJob = null;
+function openLyrics(job) {
+  lyricsJob = job;
+  $("lyrics-title").textContent = job.title;
+  $("lyrics-text").textContent = job.lyrics || "(şarkı sözü yok)";
+  $("lyrics-note").textContent = "";
+  $("lyrics-modal").showModal();
+}
+async function copyFromModal(text, label) {
+  try { await copyText(text); $("lyrics-note").textContent = `${label} kopyalandı ✓`; }
+  catch (error) { $("lyrics-note").textContent = "Kopyalanamadı: metni seçip Ctrl/Cmd+C ile kopyala"; }
+}
+$("lyrics-copy").addEventListener("click", () => lyricsJob && copyFromModal(lyricsJob.lyrics || "", "Sözler"));
+$("lyrics-copy-style").addEventListener("click", () => lyricsJob && copyFromModal(lyricsJob.style || "", "Stil"));
+$("lyrics-close").addEventListener("click", () => $("lyrics-modal").close());
+$("lyrics-modal").addEventListener("click", (event) => { if (event.target === $("lyrics-modal")) $("lyrics-modal").close(); });
+
+// ---------------------------------------------------------------- player bar
+// One player for the whole page. Covers with stems play instrumental + vocals in sync,
+// and each stem can be switched off with its own toggle.
+
+const pb = { main: new Audio(), vocals: new Audio(), id: null, stems: false, inst: true, voc: true, muted: false, seeking: false };
+pb.main.preload = "auto";
+pb.vocals.preload = "auto";
+
+function applyMix() {
+  const volume = Number($("pb-vol").value);
+  pb.main.volume = volume;
+  pb.vocals.volume = volume;
+  pb.main.muted = pb.muted || (pb.stems && !pb.inst);
+  pb.vocals.muted = pb.muted || !pb.voc;
+  $("pb-mute").textContent = pb.muted || volume === 0 ? "🔇" : "🔊";
+  for (const [cls, on] of [[".toggle.inst", pb.inst], [".toggle.voc", pb.voc]]) {
+    const button = $("pb-mix").querySelector(cls);
+    button.classList.toggle("on", on);
+    button.setAttribute("aria-pressed", String(on));
+  }
+}
+
+function startPlayback() {
+  pb.main.play().catch((error) => report(error));
+  if (pb.stems) { pb.vocals.currentTime = pb.main.currentTime; pb.vocals.play().catch(() => {}); }
+}
+
+function togglePlayback() {
+  if (!pb.id) return;
+  if (pb.main.paused) startPlayback(); else { pb.main.pause(); pb.vocals.pause(); }
+}
+
+function playJob(job) {
+  if (pb.id === job.id) { togglePlayback(); return; }
+  const stems = job.stems_status === "succeeded" && !!job.instrumental_url && !!job.vocals_url;
+  pb.main.pause();
+  pb.vocals.pause();
+  pb.id = job.id;
+  pb.stems = stems;
+  pb.inst = true;
+  pb.voc = true;
+  pb.main.src = stems ? job.instrumental_url : job.mp3_url;
+  if (stems) pb.vocals.src = job.vocals_url; else pb.vocals.removeAttribute("src");
+  pb.main.currentTime = 0;
+  $("pb-mix").classList.toggle("hidden", !stems);
+  $("pb-range").value = 0;
+  $("pb-cur").textContent = "0:00";
+  $("pb-dur").textContent = job.duration ? fmtDuration(job.duration) : "0:00";
+  $("playerbar").classList.remove("hidden");
+  document.body.classList.add("has-player");
+  applyMix();
+  updatePlayerBar();
+  startPlayback();
+}
+
+function closePlayer() {
+  pb.main.pause();
+  pb.vocals.pause();
+  pb.main.removeAttribute("src");
+  pb.vocals.removeAttribute("src");
+  pb.id = null;
+  $("playerbar").classList.add("hidden");
+  document.body.classList.remove("has-player");
+  syncPlayIcons();
+}
+
+function updatePlayerBar() {
+  if (!pb.id) return;
+  const job = jobs.find((j) => j.id === pb.id);
+  if (!job) { closePlayer(); return; }
+  const h = hue(job.title + job.style);
+  $("pb-art").style.background = `linear-gradient(135deg, hsl(${h} 80% 60%), hsl(${(h + 60) % 360} 70% 45%))`;
+  $("pb-title").textContent = job.title + (job.variant > 1 ? ` · v${job.variant}` : "");
+  $("pb-sub").textContent = pb.stems ? "Altyapı + vokal" : "Şarkı";
+}
+
+function syncPlayIcons() {
+  const playing = !!pb.id && !pb.main.paused;
+  $("pb-play").textContent = playing ? "⏸" : "▶";
+  document.querySelectorAll(".job").forEach((node) => {
+    const button = node.querySelector(".art-play");
+    const on = playing && node.dataset.id === pb.id;
+    button.textContent = on ? "⏸" : "▶";
+    node.classList.toggle("now-playing", !!pb.id && node.dataset.id === pb.id);
+  });
+}
+
+$("pb-play").addEventListener("click", togglePlayback);
+$("pb-close").addEventListener("click", closePlayer);
+$("pb-vol").addEventListener("input", applyMix);
+$("pb-mute").addEventListener("click", () => { pb.muted = !pb.muted; applyMix(); });
+$("pb-mix").querySelector(".toggle.inst").addEventListener("click", () => { pb.inst = !pb.inst; applyMix(); });
+$("pb-mix").querySelector(".toggle.voc").addEventListener("click", () => { pb.voc = !pb.voc; applyMix(); });
+$("pb-range").addEventListener("pointerdown", () => { pb.seeking = true; });
+$("pb-range").addEventListener("pointerup", () => { pb.seeking = false; });
+$("pb-range").addEventListener("input", () => {
+  const total = pb.main.duration;
+  if (!Number.isFinite(total)) return;
+  pb.main.currentTime = (Number($("pb-range").value) / 1000) * total;
+  $("pb-cur").textContent = fmtDuration(pb.main.currentTime);
+  if (pb.stems) pb.vocals.currentTime = pb.main.currentTime;
+});
+for (const type of ["play", "pause", "ended"]) pb.main.addEventListener(type, syncPlayIcons);
+pb.main.addEventListener("ended", () => { pb.vocals.pause(); });
+pb.main.addEventListener("waiting", () => { if (pb.stems) pb.vocals.pause(); });
+pb.main.addEventListener("playing", () => { if (pb.stems && pb.vocals.paused) { pb.vocals.currentTime = pb.main.currentTime; pb.vocals.play().catch(() => {}); } });
+pb.main.addEventListener("loadedmetadata", () => { if (Number.isFinite(pb.main.duration)) $("pb-dur").textContent = fmtDuration(pb.main.duration); });
+pb.main.addEventListener("timeupdate", () => {
+  const total = pb.main.duration;
+  if (!pb.seeking && Number.isFinite(total) && total > 0) {
+    $("pb-range").value = Math.round((pb.main.currentTime / total) * 1000);
+    $("pb-cur").textContent = fmtDuration(pb.main.currentTime);
+  }
+  if (pb.stems && !pb.main.paused && Math.abs(pb.vocals.currentTime - pb.main.currentTime) > 0.25) {
+    pb.vocals.currentTime = pb.main.currentTime;
+  }
+});
 
 function reuse(job) {
   if (job.folder_id && folders.some((f) => f.id === job.folder_id)) {

@@ -227,7 +227,6 @@ h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--muted); text-tra
 }
 @media (max-width: 480px) {
   .job { grid-template-columns: minmax(0, 1fr); }
-  .art { display: none; }
   .meta { margin-left: 0; width: 100%; }
   .pill { font-size: 12px; padding: 5px 10px; }
 }
@@ -236,11 +235,7 @@ h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--muted); text-tra
 .icon-btn { border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 14px; line-height: 1;
   padding: 3px 5px; border-radius: 8px; flex: none; }
 .icon-btn:hover { color: var(--accent); background: var(--panel); }
-.note { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; padding: 8px 12px; border-radius: 10px;
-  background: rgba(255, 181, 71, .08); border: 1px solid rgba(255, 181, 71, .25); color: var(--text); }
-.note-editor { display: grid; gap: 8px; }
-.note-editor textarea { font-size: 13.5px; }
-.note-editor-actions { display: flex; gap: 8px; }
+.note { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; color: var(--warn); }
 
 .menu-wrap { position: relative; }
 .menu-btn { font-size: 18px; line-height: 1; padding: 4px 12px; letter-spacing: 1px; }
@@ -252,3 +247,71 @@ h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--muted); text-tra
 .menu-item.danger:hover { color: var(--err); }
 .check { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13.5px; cursor: pointer; }
 .check input { width: auto; accent-color: var(--accent); }
+
+/* ---- compact song card ---- */
+.jobs { gap: 8px; }
+.job { grid-template-columns: 56px minmax(0, 1fr); gap: 12px; padding: 10px 12px; align-items: start; }
+.job.now-playing { border-color: rgba(255, 72, 0, .55); }
+.art { position: relative; width: 56px; height: 56px; border-radius: 10px; overflow: hidden; }
+.art-play { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; padding: 0; cursor: pointer; color: #fff;
+  font-size: 20px; background: rgba(0, 0, 0, .18); display: grid; place-items: center; transition: background .15s; }
+.art-play:hover { background: rgba(0, 0, 0, .42); }
+.job-body { gap: 4px; }
+.job-top { align-items: flex-start; }
+.job-main { flex: 1; min-width: 0; }
+.job-title-row { min-width: 0; }
+.dur { flex: none; font-size: 11.5px; font-weight: 600; padding: 2px 9px; border-radius: 999px; background: var(--line); color: var(--muted); }
+.job-flags { gap: 2px; }
+.job-note-wrap { min-width: 0; }
+.job-note { cursor: text; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.4; color: var(--warn); }
+.job-note.no-note { color: var(--muted); opacity: .55; font-size: 12.5px; }
+.job-note.no-note:hover { opacity: 1; }
+.note-editor { font-size: 13px; color: var(--warn); padding: 6px 8px; border-radius: 8px; min-height: 0; }
+.job-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+.job-foot .meta { margin-left: auto; }
+.job-menu-btn { font-size: 18px; letter-spacing: 1px; padding: 2px 8px; }
+.menu-wrap .menu { max-height: 60vh; overflow: auto; }
+.menu-label { padding: 8px 12px 2px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.menu-divider { height: 1px; background: var(--line); margin: 4px 2px; }
+a.menu-item { text-decoration: none; display: block; }
+.menu-item.danger { color: var(--err); }
+.mixer-toggles { display: flex; gap: 6px; }
+
+/* ---- lyrics modal ---- */
+.modal { width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 64px); padding: 0; border: 1px solid var(--line);
+  border-radius: 18px; background: var(--panel); color: var(--text); }
+.modal::backdrop { background: rgba(0, 0, 0, .6); }
+.modal[open] { display: flex; flex-direction: column; }
+.modal-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 16px 20px 8px; }
+.modal-head h3 { text-transform: none; letter-spacing: 0; font-size: 16px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lyrics-text { margin: 0; padding: 8px 20px 16px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 14px/1.6 ui-monospace, "SF Mono", Menlo, monospace; user-select: text; }
+.modal-actions { display: flex; align-items: center; gap: 8px; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
+
+/* ---- player bar ---- */
+body.has-player { padding-bottom: 88px; }
+.playerbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;
+  align-items: center; gap: 16px; padding: 10px 24px; background: rgba(20, 20, 28, .94); backdrop-filter: blur(14px); border-top: 1px solid var(--line); }
+.pb-now { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.pb-art { width: 48px; height: 48px; border-radius: 8px; flex: none; display: grid; place-items: center; color: rgba(255, 255, 255, .85); font-size: 20px; }
+.pb-meta { min-width: 0; }
+.pb-title { font-weight: 700; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pb-center { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.pb-play { flex: none; width: 38px; height: 38px; border-radius: 50%; border: 0; cursor: pointer; font-size: 16px; color: #fff;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+.pb-time { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 34px; text-align: center; }
+.pb-range, .pb-vol { accent-color: var(--accent); padding: 0; background: transparent; border: 0; width: auto; }
+.pb-range { flex: 1; min-width: 0; }
+.pb-vol { width: 90px; }
+.pb-right { display: flex; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; }
+.pb-right .toggle { padding: 4px 10px; font-size: 12px; white-space: nowrap; }
+
+@media (max-width: 1000px) {
+  .playerbar { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "now right" "center center"; gap: 6px 12px; padding: 8px 16px; }
+  .pb-now { grid-area: now; } .pb-center { grid-area: center; } .pb-right { grid-area: right; }
+  .pb-vol { display: none; }
+  body.has-player { padding-bottom: 120px; }
+}
+@media (max-width: 480px) {
+  .job { grid-template-columns: 48px minmax(0, 1fr); }
+  .art { display: grid; width: 48px; height: 48px; }
+}

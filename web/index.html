@@ -184,57 +184,87 @@
 
   <template id="job-tpl">
     <article class="job">
-      <div class="art"><span>♪</span></div>
+      <div class="art">
+        <span class="art-note">♪</span>
+        <button type="button" class="art-play hidden" aria-label="Çal">▶</button>
+      </div>
       <div class="job-body">
         <div class="job-top">
-          <div>
-            <div class="job-title-row"><div class="job-title"></div><button type="button" class="icon-btn rename" title="Adı düzenle">✎</button></div>
+          <div class="job-main">
+            <div class="job-title-row">
+              <div class="job-title"></div>
+              <button type="button" class="icon-btn rename" title="Adı düzenle">✎</button>
+              <span class="dur hidden"></span>
+            </div>
             <div class="job-style muted small"></div>
           </div>
           <div class="job-flags">
             <span class="badge"></span>
             <button type="button" class="like" title="Beğen" aria-pressed="false">♡</button>
+            <div class="menu-wrap">
+              <button type="button" class="icon-btn menu-btn job-menu-btn" aria-haspopup="true" aria-expanded="false" title="İşlemler">⋯</button>
+              <div class="menu hidden job-menu" role="menu"></div>
+            </div>
           </div>
         </div>
         <div class="job-folder muted small hidden"></div>
+        <div class="job-note-wrap">
+          <div class="job-note" role="button" tabindex="0" title="Notu düzenlemek için tıkla"></div>
+          <textarea class="note-editor hidden" rows="2" maxlength="2000" placeholder="Not… (Ctrl/Cmd+Enter kaydeder, Esc vazgeçer)"></textarea>
+        </div>
         <div class="job-progress hidden">
           <div class="stage small"></div>
           <div class="progress indeterminate"><div></div></div>
         </div>
-        <audio class="player hidden" controls preload="none"></audio>
-        <div class="note job-note hidden"></div>
-        <div class="note-editor hidden">
-          <textarea rows="3" maxlength="2000" placeholder="Bu şarkı için not…"></textarea>
-          <div class="note-editor-actions">
-            <button type="button" class="btn primary small note-save">Kaydet</button>
-            <button type="button" class="btn ghost small note-cancel">Vazgeç</button>
-          </div>
-        </div>
         <div class="job-error error small hidden"></div>
-        <div class="mixer hidden">
-          <div class="mixer-toggles">
-            <button type="button" class="toggle inst on" aria-pressed="true" title="Altyapıyı aç/kapat">🎸 Altyapı</button>
-            <button type="button" class="toggle voc on" aria-pressed="true" title="Vokali aç/kapat">🎤 Vokal</button>
-          </div>
-        </div>
         <div class="stems-state hidden">
           <div class="stems-status muted small"></div>
           <div class="progress indeterminate stems-progress hidden"><div></div></div>
         </div>
         <div class="stems-error error small hidden"></div>
-        <div class="job-actions">
-          <select class="download small-select hidden" title="İndir" aria-label="İndir"></select>
-          <button class="btn ghost small note-btn">📝 Not</button>
-          <button class="btn ghost small reuse">Tekrar kullan</button>
-          <select class="move small-select" title="Başka klasöre taşı"></select>
+        <div class="job-foot">
+          <button type="button" class="btn ghost small lyrics-btn">📄 Sözler</button>
           <button class="btn ghost small stems-btn hidden" title="Vokali ayırıp vokalsiz altyapı çıkar">🎙 Vokali ayır</button>
-          <button class="btn ghost small cancel hidden">İptal</button>
-          <button class="btn ghost small danger delete hidden">Sil</button>
           <span class="meta muted small"></span>
         </div>
       </div>
     </article>
   </template>
+
+  <dialog id="lyrics-modal" class="modal">
+    <div class="modal-head">
+      <h3 id="lyrics-title"></h3>
+      <button type="button" id="lyrics-close" class="icon-btn" aria-label="Kapat">✕</button>
+    </div>
+    <pre id="lyrics-text" class="lyrics-text"></pre>
+    <div class="modal-actions">
+      <button type="button" id="lyrics-copy" class="btn primary small">Kopyala</button>
+      <button type="button" id="lyrics-copy-style" class="btn ghost small">Stili kopyala</button>
+      <span id="lyrics-note" class="muted small"></span>
+    </div>
+  </dialog>
+
+  <div id="playerbar" class="playerbar hidden" role="region" aria-label="Oynatıcı">
+    <div class="pb-now">
+      <div id="pb-art" class="pb-art">♪</div>
+      <div class="pb-meta"><div id="pb-title" class="pb-title"></div><div id="pb-sub" class="muted small"></div></div>
+    </div>
+    <div class="pb-center">
+      <button type="button" id="pb-play" class="pb-play" aria-label="Çal / duraklat">▶</button>
+      <span id="pb-cur" class="pb-time">0:00</span>
+      <input id="pb-range" class="pb-range" type="range" min="0" max="1000" value="0" aria-label="Konum">
+      <span id="pb-dur" class="pb-time">0:00</span>
+    </div>
+    <div class="pb-right">
+      <div id="pb-mix" class="mixer-toggles hidden">
+        <button type="button" class="toggle inst on" aria-pressed="true" title="Altyapıyı aç/kapat">🎸 Altyapı</button>
+        <button type="button" class="toggle voc on" aria-pressed="true" title="Vokali aç/kapat">🎤 Vokal</button>
+      </div>
+      <button type="button" id="pb-mute" class="icon-btn" aria-label="Sesi kapat">🔊</button>
+      <input id="pb-vol" class="pb-vol" type="range" min="0" max="1" step="0.01" value="1" aria-label="Ses">
+      <button type="button" id="pb-close" class="icon-btn" aria-label="Oynatıcıyı kapat">✕</button>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>
