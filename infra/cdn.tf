@@ -18,6 +18,7 @@ resource "aws_cloudfront_distribution" "web" {
   comment             = "yue cover studio"
   default_root_object = "index.html"
   price_class         = "PriceClass_100"
+  aliases             = ["studio.serkanify.com"]
   http_version        = "http2and3"
 
   origin {
@@ -61,7 +62,11 @@ resource "aws_cloudfront_distribution" "web" {
     geo_restriction { restriction_type = "none" }
   }
 
-  viewer_certificate { cloudfront_default_certificate = true }
+  viewer_certificate {
+    acm_certificate_arn      = aws_acm_certificate_validation.studio.certificate_arn
+    ssl_support_method       = "sni-only"
+    minimum_protocol_version = "TLSv1.2_2021"
+  }
 }
 
 resource "aws_s3_bucket_policy" "studio" {
@@ -85,4 +90,10 @@ resource "aws_acm_certificate" "studio" {
   domain_name       = "studio.serkanify.com"
   validation_method = "DNS"
   lifecycle { create_before_destroy = true }
+}
+
+resource "aws_acm_certificate_validation" "studio" {
+  provider                = aws.us_east_1
+  certificate_arn         = aws_acm_certificate.studio.arn
+  validation_record_fqdns = [for o in aws_acm_certificate.studio.domain_validation_options : o.resource_record_name]
 }

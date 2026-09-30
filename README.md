@@ -50,6 +50,8 @@ Kapasite yoksa sırasıyla `g5.2xlarge` → `g6e.xlarge` → `g6.xlarge` → `g5
 Model ağırlıkları hiçbir zaman Mac'e inmez; GPU kutusu repo'yu GitHub'dan, modelleri Hugging Face'ten çeker.
 
 ## İşletim
+Studio adresi: https://studio.serkanify.com (CloudFront + ücretsiz ACM sertifikası, `us-east-1`). DNS Netlify'da: `studio` CNAME → CloudFront alan adı, artı ACM doğrulama CNAME'i. Tarayıcıdaki giriş alan adına göre saklanır; adres değişince bir kez yeniden giriş gerekir.
+
 ```bash
 # yerel ops profili (claude-ops kullanıcısı yue-ops rolünü üstlenir)
 aws configure set profile.yue.role_arn arn:aws:iam::730335425452:role/yue-ops
