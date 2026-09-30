@@ -1,8 +1,10 @@
-# YuE Cover Studio
+# Serkanify Studio
+
 
 Suno/noiz.ai tarzı **cover** servisi: bir şarkı yüklersin, kendi sözlerin ve stilinle
 [YuE2](https://github.com/multimodal-art-projection/YuE) yeni bir versiyonunu üretir.
-AWS'de çalışır; GPU yalnızca şarkı üretilirken açıktır.
+AWS'de çalışır; GPU yalnızca şarkı üretilirken açıktır. Üretilen şarkıdan vokal BS-RoFormer ile
+ayrılabilir (vokalsiz altyapı + vokal). Hedef adres: `studio.serkanify.com`.
 
 ```
 Tarayıcı ──► CloudFront ──► S3 (web/)                         [her zaman açık, ~$0]

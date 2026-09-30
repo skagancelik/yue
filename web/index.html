@@ -3,8 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>YuE Cover Studio</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='15' fill='%23ff5c8a'/><path d='M13 9v11.5a3.5 3.5 0 1 1-2-3.2V9h9v3h-7z' fill='white'/></svg>">
+  <title>Serkanify Studio</title>
+  <link rel="icon" type="image/png" href="serkanify-icon.png">
+  <link rel="apple-touch-icon" href="serkanify-icon.png">
+  <meta name="theme-color" content="#0b0b10">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
@@ -12,8 +14,8 @@
 <body>
   <div id="login" class="login hidden">
     <form id="login-form" class="login-card">
-      <div class="logo big">♪</div>
-      <h1>YuE Cover Studio</h1>
+      <img class="login-logo" src="serkanify-logo.svg" alt="serkanify" width="200" height="54">
+      <h1 class="studio-title">Studio</h1>
       <p class="muted">Devam etmek için şifreni gir</p>
       <input id="passcode" type="password" placeholder="Şifre" autocomplete="current-password" required>
       <button class="btn primary" type="submit">Giriş</button>
@@ -23,7 +25,7 @@
 
   <div id="app" class="app hidden">
     <header class="topbar">
-      <div class="brand"><span class="logo">♪</span> YuE Cover Studio</div>
+      <div class="brand"><img src="serkanify-logo.svg" alt="serkanify" width="119" height="32"><span class="brand-studio">Studio</span></div>
       <div class="gpu">
         <span id="gpu-pill" class="pill"><span class="dot"></span><span id="gpu-text">…</span></span>
         <button id="gpu-stop" class="btn ghost small hidden" title="GPU'yu şimdi kapat">GPU'yu kapat</button>
@@ -172,12 +174,24 @@
         </div>
         <audio class="player hidden" controls preload="none"></audio>
         <div class="job-error error small hidden"></div>
+        <div class="stems hidden">
+          <div class="stems-head"><span class="stems-title">Altyapı (vokalsiz)</span><span class="stems-status muted small"></span></div>
+          <div class="progress indeterminate stems-progress hidden"><div></div></div>
+          <audio class="stems-player hidden" controls preload="none"></audio>
+          <div class="stems-links hidden">
+            <a class="btn ghost small dl-inst-flac" target="_blank" rel="noopener">Altyapı FLAC</a>
+            <a class="btn ghost small dl-inst-mp3" target="_blank" rel="noopener">Altyapı MP3</a>
+            <a class="btn ghost small dl-vocals" target="_blank" rel="noopener">Vokal FLAC</a>
+          </div>
+          <div class="stems-error error small hidden"></div>
+        </div>
         <div class="job-actions">
           <a class="btn ghost small dl-mp3 hidden" target="_blank" rel="noopener">MP3</a>
           <a class="btn ghost small dl-flac hidden" target="_blank" rel="noopener">FLAC</a>
           <a class="btn ghost small dl-abc hidden" target="_blank" rel="noopener">Nota</a>
           <button class="btn ghost small reuse">Tekrar kullan</button>
           <select class="move small-select" title="Başka klasöre taşı"></select>
+          <button class="btn ghost small stems-btn hidden" title="Vokali ayırıp vokalsiz altyapı çıkar">🎙 Vokali ayır</button>
           <button class="btn ghost small cancel hidden">İptal</button>
           <button class="btn ghost small danger delete hidden">Sil</button>
           <span class="meta muted small"></span>

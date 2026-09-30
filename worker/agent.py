@@ -27,6 +27,10 @@ TURBO = "http://127.0.0.1:8000"
 WORKER_ID = "__worker__"
 MAX_PARALLEL = 2          # matches YUE2_AR_CONCURRENCY in turbo.env
 MAX_ATTEMPTS = 2
+TASKS = "tasks"           # owner of non-cover queue items (e.g. stem separation)
+SEPARATOR = "/opt/yue/sep/.venv/bin/audio-separator"
+SEPARATOR_MODELS = "/opt/yue/sep/models"
+SEPARATOR_MODEL = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"   # keep in sync with setup.sh
 
 table = boto3.resource("dynamodb", region_name=REGION).Table(TABLE)
 s3 = boto3.client("s3", region_name=REGION)
@@ -146,19 +150,24 @@ def start_turbo():
 # ------------------------------------------------------------------ jobs
 
 def recover_orphans():
-    """Jobs this box claimed before a crash/stop go back to the queue."""
-    items = table.query(IndexName="history", KeyConditionExpression=Key("owner").eq("me"),
-                        ScanIndexForward=False, Limit=100)["Items"]
-    for job in items:
-        if job.get("status") != "running":
-            continue
-        attempts = int(job.get("attempts", 1))
-        if attempts >= MAX_ATTEMPTS:
-            update_job(job["id"], status="failed", stage="failed", finished_at=now(),
-                       error="Sunucu iş sırasında durdu (2 deneme)")
-        else:
-            log("requeue orphan", job["id"])
-            update_job(job["id"], status="queued", stage="queued", message="Yeniden sırada", queue="q")
+    """Jobs and tasks this box claimed before a crash/stop go back to the queue."""
+    for owner in ("me", TASKS):
+        items = table.query(IndexName="history", KeyConditionExpression=Key("owner").eq(owner),
+                            ScanIndexForward=False, Limit=100)["Items"]
+        for job in items:
+            if job.get("status") != "running":
+                continue
+            attempts = int(job.get("attempts", 1))
+            if attempts >= MAX_ATTEMPTS:
+                update_job(job["id"], status="failed", stage="failed", finished_at=now(),
+                           error="Sunucu iş sırasında durdu (2 deneme)")
+                if job.get("kind") == "stems":
+                    update_job(job["job_id"], stems_status="failed", stems_error="Sunucu iş sırasında durdu, tekrar deneyin")
+            else:
+                log("requeue orphan", job["id"])
+                update_job(job["id"], status="queued", stage="queued", message="Yeniden sırada", queue="q")
+                if job.get("kind") == "stems":
+                    update_job(job["job_id"], stems_status="queued", stems_message="Yeniden sırada")
 
 
 def claim(job):
@@ -273,6 +282,65 @@ def process(job):
         touch()
 
 
+def separate(source, out, env=None):
+    names = json.dumps({"Instrumental": "instrumental", "Vocals": "vocals"})
+    return subprocess.run(
+        [SEPARATOR, str(source), "-m", SEPARATOR_MODEL, "--model_file_dir", SEPARATOR_MODELS,
+         "--output_dir", str(out), "--output_format", "FLAC", "--sample_rate", "48000",
+         "--custom_output_names", names],
+        capture_output=True, text=True, env=env)
+
+
+def process_stems(task):
+    """Split a finished cover into instrumental + vocals with BS-RoFormer."""
+    task_id, job_id = task["id"], task["job_id"]
+    touch()
+    work = WORK / task_id
+    out = work / "out"
+    out.mkdir(parents=True, exist_ok=True)
+    try:
+        job = table.get_item(Key={"id": job_id}).get("Item")
+        if not job or not job.get("flac_key"):
+            raise RuntimeError("Şarkı bulunamadı")
+        update_job(job_id, stems_status="running", stems_message="Vokal ayrılıyor")
+        source = work / "cover.flac"
+        s3.download_file(BUCKET, job["flac_key"], str(source))
+        started = time.time()
+        result = separate(source, out)
+        if result.returncode != 0 and "out of memory" in (result.stdout + result.stderr).lower():
+            # YuE2 keeps most of the GPU; fall back to CPU rather than failing.
+            log("separator OOM on GPU, retrying on CPU", task_id)
+            update_job(job_id, stems_message="Vokal ayrılıyor (GPU dolu, işlemcide — biraz sürer)")
+            result = separate(source, out, env={**os.environ, "CUDA_VISIBLE_DEVICES": ""})
+        if result.returncode != 0:
+            log("separator failed:", result.stdout[-2000:], result.stderr[-2000:])
+            raise RuntimeError("Vokal ayırma başarısız: " + (result.stderr or result.stdout).strip()[-300:])
+        instrumental, vocals = out / "instrumental.flac", out / "vocals.flac"
+        if not instrumental.exists() or not vocals.exists():
+            raise RuntimeError(f"Ayırıcı beklenen dosyaları üretmedi: {sorted(p.name for p in out.iterdir())}")
+        mp3 = work / "instrumental.mp3"
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", str(instrumental), "-codec:a", "libmp3lame",
+                        "-b:a", "320k", str(mp3)], check=True)
+        keys = {"instrumental_key": f"outputs/{job_id}/instrumental.flac",
+                "instrumental_mp3_key": f"outputs/{job_id}/instrumental.mp3",
+                "vocals_key": f"outputs/{job_id}/vocals.flac"}
+        s3.upload_file(str(instrumental), BUCKET, keys["instrumental_key"], ExtraArgs={"ContentType": "audio/flac"})
+        s3.upload_file(str(mp3), BUCKET, keys["instrumental_mp3_key"], ExtraArgs={"ContentType": "audio/mpeg"})
+        s3.upload_file(str(vocals), BUCKET, keys["vocals_key"], ExtraArgs={"ContentType": "audio/flac"})
+        update_job(job_id, stems_status="succeeded", stems_message="Hazır",
+                   stems_seconds=int(time.time() - started), **keys)
+        update_job(task_id, status="succeeded", stage="done", message="Hazır", finished_at=now())
+        log("stems done", job_id, f"{time.time() - started:.0f}s")
+    except Exception as error:
+        traceback.print_exc()
+        update_job(job_id, stems_status="failed", stems_error=str(error)[:500])
+        update_job(task_id, status="failed", stage="failed", message="Hata", error=str(error)[:500], finished_at=now())
+    finally:
+        subprocess.run(["rm", "-rf", str(work)])
+        active.pop(task_id, None)
+        touch()
+
+
 def download(url, path, required=True):
     response = requests.get(url, headers=turbo_headers(), timeout=300, stream=True)
     if response.status_code != 200:
@@ -299,8 +367,9 @@ def work_loop():
                 if len(active) >= MAX_PARALLEL:
                     break
                 if claim(job):
-                    log("claimed", job["id"])
-                    thread = threading.Thread(target=process, args=(job,), daemon=True)
+                    log("claimed", job.get("kind", "cover"), job["id"])
+                    target = process_stems if job.get("kind") == "stems" else process
+                    thread = threading.Thread(target=target, args=(job,), daemon=True)
                     active[job["id"]] = thread
                     thread.start()
         busy = bool(active)

@@ -417,7 +417,7 @@ function renderJobs() {
   const container = $("jobs");
   const list = visibleJobs();
   const playing = new Map();
-  container.querySelectorAll("audio").forEach((a) => { if (!a.paused) playing.set(a.dataset.id, a); });
+  container.querySelectorAll("audio.player").forEach((a) => { if (!a.paused) playing.set(a.dataset.id, a); });
   $("empty").classList.toggle("hidden", list.length > 0);
   $("lib-count").textContent = list.length ? `${list.length} kayıt` : "";
 
@@ -491,6 +491,8 @@ function fillJob(node, job, isPlaying) {
     link.classList.toggle("hidden", !job[key]);
     if (job[key]) link.href = job[key];
   }
+  fillStems(node, job);
+
   const error = node.querySelector(".job-error");
   error.classList.toggle("hidden", !job.error);
   error.textContent = job.error || "";
@@ -525,6 +527,49 @@ function fillJob(node, job, isPlaying) {
     jobs = jobs.filter((j) => j.id !== job.id);
     render();
   };
+}
+
+const STEMS_TEXT = { queued: "Sırada", running: "Vokal ayrılıyor", succeeded: "", failed: "" };
+
+function fillStems(node, job) {
+  const state = job.stems_status;
+  const box = node.querySelector(".stems");
+  const button = node.querySelector(".stems-btn");
+  const canRequest = job.status === "succeeded" && (!state || state === "failed");
+  button.classList.toggle("hidden", !canRequest);
+  button.textContent = state === "failed" ? "🎙 Vokali tekrar ayır" : "🎙 Vokali ayır";
+  button.onclick = async () => {
+    button.disabled = true;
+    try {
+      const result = await api(`/jobs/${job.id}/stems`, { method: "POST" });
+      jobs = jobs.map((j) => (j.id === job.id ? result.job : j));
+      render();
+      refresh();
+    } catch (error) { report(error); }
+    button.disabled = false;
+  };
+
+  box.classList.toggle("hidden", !state);
+  if (!state) return;
+  const working = state === "queued" || state === "running";
+  node.querySelector(".stems-progress").classList.toggle("hidden", !working);
+  let status = working ? (job.stems_message || STEMS_TEXT[state]) : "";
+  if (state === "queued" && gpu && gpu.gpu.state !== "running") status = "Sırada · GPU açılıyor";
+  node.querySelector(".stems-status").textContent = status;
+  const player = node.querySelector(".stems-player");
+  player.classList.toggle("hidden", !job.instrumental_url);
+  if (job.instrumental_url && player.dataset.src !== job.id && player.paused) {
+    player.src = job.instrumental_url;
+    player.dataset.src = job.id;
+  }
+  node.querySelector(".stems-links").classList.toggle("hidden", state !== "succeeded");
+  for (const [cls, key] of [["dl-inst-flac", "instrumental_download"], ["dl-inst-mp3", "instrumental_mp3_download"], ["dl-vocals", "vocals_download"]]) {
+    const link = node.querySelector("." + cls);
+    if (job[key]) link.href = job[key];
+  }
+  const error = node.querySelector(".stems-error");
+  error.classList.toggle("hidden", state !== "failed");
+  error.textContent = state === "failed" ? `Vokal ayırma başarısız: ${job.stems_error || "bilinmeyen hata"}` : "";
 }
 
 function reuse(job) {
@@ -599,7 +644,7 @@ async function refresh() {
     console.warn(error);
     if (!passcode) return;
   }
-  const busy = jobs.some((j) => j.status === "queued" || j.status === "running")
+  const busy = jobs.some((j) => ["queued", "running"].includes(j.status) || ["queued", "running"].includes(j.stems_status))
     || (gpu && gpu.gpu.state !== "stopped");
   pollTimer = setTimeout(refresh, busy ? 4000 : 20000);
 }

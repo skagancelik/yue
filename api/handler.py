@@ -32,6 +32,8 @@ OWNER = "me"
 FOLDERS = "folders"
 SOURCES = "sources"
 STYLES = "styles"
+TASKS = "tasks"            # GPU queue items that are not covers (stem separation)
+STEM_KEYS = ("instrumental_key", "instrumental_mp3_key", "vocals_key")
 WORKER_ID = "__worker__"
 MAX_UPLOAD = 40 * 1024 * 1024
 AUDIO_EXT = {"mp3", "wav", "flac", "m4a", "aac", "ogg", "opus", "webm", "aiff", "aif"}
@@ -212,8 +214,14 @@ def public_job(job):
     out = {k: job.get(k) for k in (
         "id", "group", "title", "style", "lyrics", "seed", "status", "stage", "message", "error",
         "created_at", "started_at", "finished_at", "duration", "source_name", "tokens", "variant",
-        "upload_key", "folder_id", "source_id")}
+        "upload_key", "folder_id", "source_id", "stems_status", "stems_message", "stems_error")}
     out["liked"] = bool(job.get("liked"))
+    if job.get("stems_status") == "succeeded":
+        name = job.get("title")
+        out["instrumental_url"] = presign_get(job["instrumental_mp3_key"])
+        out["instrumental_download"] = presign_get(job["instrumental_key"], safe_filename(f"{name} (altyapı)", "flac"))
+        out["instrumental_mp3_download"] = presign_get(job["instrumental_mp3_key"], safe_filename(f"{name} (altyapı)", "mp3"))
+        out["vocals_download"] = presign_get(job["vocals_key"], safe_filename(f"{name} (vokal)", "flac"))
     if job.get("status") == "succeeded":
         if job.get("mp3_key"):
             out["mp3_url"] = presign_get(job["mp3_key"])
@@ -324,11 +332,31 @@ def delete_job(job_id):
     job = get_job(job_id)
     if job["status"] in ("queued", "running"):
         raise HttpError(409, "Önce işi iptal edin")
-    for key in ("mp3_key", "flac_key", "abc_key"):
+    if job.get("stems_status") in ("queued", "running"):
+        raise HttpError(409, "Vokal ayırma sürüyor, bitmesini bekleyin")
+    for key in ("mp3_key", "flac_key", "abc_key") + STEM_KEYS:
         if job.get(key):
             s3.delete_object(Bucket=BUCKET, Key=job[key])
     table.delete_item(Key={"id": job_id})
     return {"deleted": job_id}
+
+
+def request_stems(job_id):
+    """Queue BS-RoFormer vocal/instrumental separation of a finished cover."""
+    job = get_job(job_id)
+    if job.get("status") != "succeeded" or not job.get("flac_key"):
+        raise HttpError(409, "Önce şarkının üretimi tamamlanmalı")
+    if job.get("stems_status") in ("queued", "running", "succeeded"):
+        return {"job": public_job(job), "gpu": describe_gpu()["state"]}
+    created = now()
+    table.put_item(Item={"id": uuid.uuid4().hex, "owner": TASKS, "kind": "stems", "job_id": job_id,
+                         "queue": "q", "status": "queued", "stage": "queued", "message": "Sırada",
+                         "created_at": created * 1000, "updated_at": created})
+    table.update_item(Key={"id": job_id},
+                      UpdateExpression="SET stems_status = :q, stems_message = :m REMOVE stems_error",
+                      ExpressionAttributeValues={":q": "queued", ":m": "Sırada"})
+    gpu_state = ensure_gpu()
+    return {"job": public_job(get_job(job_id)), "gpu": gpu_state}
 
 
 def update_job_fields(job_id, body):
@@ -487,6 +515,7 @@ ROUTES = [
     ("DELETE", r"/api/styles/([0-9a-f]{32})", lambda e, m: delete_style(m.group(1))),
     ("GET", r"/api/jobs/([0-9a-f]{32})", lambda e, m: public_job(get_job(m.group(1)))),
     ("POST", r"/api/jobs/([0-9a-f]{32})/cancel", lambda e, m: cancel_job(m.group(1))),
+    ("POST", r"/api/jobs/([0-9a-f]{32})/stems", lambda e, m: request_stems(m.group(1))),
     ("DELETE", r"/api/jobs/([0-9a-f]{32})", lambda e, m: delete_job(m.group(1))),
     ("POST", r"/api/gpu/start", lambda e, m: {"gpu": ensure_gpu()}),
     ("POST", r"/api/gpu/stop", lambda e, m: {"stopped": stop_gpu("Kullanıcı tarafından durduruldu")}),
@@ -531,6 +560,14 @@ def janitor(event, context):
                               ExpressionAttributeValues={":f": "failed", ":t": t,
                                                          ":e": "İş zaman aşımına uğradı (sunucu yanıt vermedi)"})
     running = [j for j in running if t - int(j.get("updated_at", 0)) <= STALE_RUNNING_SECONDS]
+
+    for task in all_items(TASKS):
+        if task.get("status") == "running" and t - int(task.get("updated_at", 0)) > STALE_RUNNING_SECONDS:
+            print("failing stale task", task["id"])
+            table.update_item(Key={"id": task["id"]}, UpdateExpression="SET #s = :f, finished_at = :t, updated_at = :t",
+                              ExpressionAttributeNames={"#s": "status"}, ExpressionAttributeValues={":f": "failed", ":t": t})
+            table.update_item(Key={"id": task["job_id"]}, UpdateExpression="SET stems_status = :f, stems_error = :e",
+                              ExpressionAttributeValues={":f": "failed", ":e": "Vokal ayırma zaman aşımına uğradı, tekrar deneyin"})
 
     if gpu["state"] == "stopped":
         if queue:
