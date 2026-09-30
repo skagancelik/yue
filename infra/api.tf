@@ -97,7 +97,7 @@ resource "aws_lambda_function" "janitor" {
   handler          = "handler.janitor"
   filename         = data.archive_file.api.output_path
   source_code_hash = data.archive_file.api.output_base64sha256
-  timeout          = 60
+  timeout          = 180 # walks several GPU types when capacity is short
   memory_size      = 128
   environment { variables = local.api_env }
   depends_on = [aws_cloudwatch_log_group.janitor]

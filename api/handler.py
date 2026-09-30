@@ -114,16 +114,21 @@ def describe_gpu():
             "launched_at": int(instance["LaunchTime"].timestamp())}
 
 
-def ensure_gpu():
+def ensure_gpu(quick=False):
     """Start the GPU if it is stopped. Falls back to other instance types when
-    AWS has no capacity for the current one. Returns the resulting state."""
+    AWS has no capacity for the current one. Returns the resulting state.
+
+    quick=True (API requests) only tries the current type so the request stays
+    well under CloudFront's 30 s origin timeout; the janitor walks the fallbacks."""
     gpu = describe_gpu()
     if gpu["state"] in ("running", "pending"):
         return gpu["state"]
     if gpu["state"] != "stopped":
         # stopping / shutting-down: the janitor starts it on its next tick.
         return gpu["state"]
-    candidates = [gpu["type"]] + [t for t in [PRIMARY_TYPE] + FALLBACK_TYPES if t != gpu["type"]]
+    candidates = [gpu["type"]] + [t for t in dict.fromkeys([PRIMARY_TYPE] + FALLBACK_TYPES) if t != gpu["type"]]
+    if quick:
+        candidates = candidates[:1]
     last_error = None
     for index, instance_type in enumerate(candidates):
         try:
@@ -141,7 +146,9 @@ def ensure_gpu():
                             "VcpuLimitExceeded"):
                 raise
             print(f"start failed on {instance_type}: {code}")
-    set_worker(state="no_capacity", message=f"AWS'de şu an GPU kapasitesi yok ({last_error}); tekrar denenecek")
+    message = f"AWS'de şu an GPU kapasitesi yok ({last_error}); " + (
+        "diğer GPU tipleri birkaç dakika içinde denenecek" if quick else "5 dakikada bir tekrar denenecek")
+    set_worker(state="no_capacity", message=message)
     return "no_capacity"
 
 
@@ -311,7 +318,7 @@ def create_jobs(body):
             job["source_id"] = source_id
         table.put_item(Item=job)
         jobs.append(job)
-    gpu_state = ensure_gpu()
+    gpu_state = ensure_gpu(quick=True)
     return {"jobs": [public_job(j) for j in jobs], "gpu": gpu_state}
 
 
@@ -355,7 +362,7 @@ def request_stems(job_id):
     table.update_item(Key={"id": job_id},
                       UpdateExpression="SET stems_status = :q, stems_message = :m REMOVE stems_error",
                       ExpressionAttributeValues={":q": "queued", ":m": "Sırada"})
-    gpu_state = ensure_gpu()
+    gpu_state = ensure_gpu(quick=True)
     return {"job": public_job(get_job(job_id)), "gpu": gpu_state}
 
 
@@ -517,7 +524,7 @@ ROUTES = [
     ("POST", r"/api/jobs/([0-9a-f]{32})/cancel", lambda e, m: cancel_job(m.group(1))),
     ("POST", r"/api/jobs/([0-9a-f]{32})/stems", lambda e, m: request_stems(m.group(1))),
     ("DELETE", r"/api/jobs/([0-9a-f]{32})", lambda e, m: delete_job(m.group(1))),
-    ("POST", r"/api/gpu/start", lambda e, m: {"gpu": ensure_gpu()}),
+    ("POST", r"/api/gpu/start", lambda e, m: {"gpu": ensure_gpu(quick=True)}),
     ("POST", r"/api/gpu/stop", lambda e, m: {"stopped": stop_gpu("Kullanıcı tarafından durduruldu")}),
 ]
 
