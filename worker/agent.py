@@ -197,12 +197,20 @@ def process(job):
         source = work / Path(job["upload_key"]).name
         s3.download_file(BUCKET, job["upload_key"], str(source))
         update_job(job_id, stage="submitting", message="Modele gönderiliyor")
-        with source.open("rb") as handle:
-            response = requests.post(
-                f"{TURBO}/v1/covers", headers={**turbo_headers(), "Idempotency-Key": job_id},
-                files={"audio": (source.name, handle)},
-                data={"style": job["style"], "lyrics": job["lyrics"], "seed": str(int(job["seed"]))},
-                timeout=120)
+        # The inference worker restarts itself after a failed job; wait instead of failing.
+        deadline = time.time() + 10 * 60
+        while True:
+            touch()
+            with source.open("rb") as handle:
+                response = requests.post(
+                    f"{TURBO}/v1/covers", headers={**turbo_headers(), "Idempotency-Key": job_id},
+                    files={"audio": (source.name, handle)},
+                    data={"style": job["style"], "lyrics": job["lyrics"], "seed": str(int(job["seed"]))},
+                    timeout=120)
+            if response.status_code != 503 or time.time() > deadline:
+                break
+            update_job(job_id, message="Model hazırlanıyor, bekleniyor")
+            time.sleep(5)
         if response.status_code >= 400:
             raise RuntimeError(f"Model isteği reddetti: {response.text[:300]}")
         turbo_id = response.json()["id"]
@@ -230,7 +238,11 @@ def process(job):
             return
         if status["status"] == "failed":
             error = status.get("error") or {}
-            raise RuntimeError(error.get("message") or "Üretim başarısız")
+            message = error.get("message") or ""
+            if not message or message.startswith("Inference failed"):
+                message = ("Model bu kayıttan şarkı üretemedi (çoğunlukla melodi çıkarılamadığında olur). "
+                           "Başka bir kayıt veya farklı bir kesit deneyin.")
+            raise RuntimeError(message)
 
         update_job(job_id, stage="publishing", message="Dosyalar hazırlanıyor")
         flac, mp3, abc = work / "cover.flac", work / "cover.mp3", work / "score.abc"

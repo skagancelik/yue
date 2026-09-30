@@ -27,6 +27,13 @@ if ! nvidia-smi >/dev/null 2>&1; then
 fi
 nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
 
+# Triton (torch.compile inside vLLM) builds small C helpers at startup.
+if ! command -v gcc >/dev/null || [ ! -f /usr/include/python3.12/Python.h ]; then
+  step "Derleyici kuruluyor"
+  apt-get update -q
+  apt-get install -y -q build-essential python3-dev
+fi
+
 # 2. uv + Python 3.12 + YuE2-Turbo (vLLM path) at a pinned commit.
 if ! command -v uv >/dev/null && [ ! -x /usr/local/bin/uv ]; then
   step "uv kuruluyor"
