@@ -22,7 +22,7 @@ variable "region" { default = "eu-central-1" }
 variable "az" { default = "eu-central-1b" }
 variable "gpu_instance_type" { default = "g6.2xlarge" }
 # Tried in order when the primary type has no capacity.
-variable "gpu_fallback_types" { default = "g5.2xlarge,g6e.xlarge" }
+variable "gpu_fallback_types" { default = "g5.2xlarge,g6e.xlarge,g6.xlarge,g5.xlarge" }
 variable "idle_minutes" { default = 10 }
 variable "root_volume_gb" { default = 45 }
 variable "github_repo" { default = "https://github.com/skagancelik/yue.git" }

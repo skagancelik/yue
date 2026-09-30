@@ -33,7 +33,7 @@ yue-janitor (5 dk'da bir): boştaki/ölü GPU'yu durdurur, bekleyen iş varsa ba
 | İlk şarkı (açılış + üretim + 10 dk bekleme) | ≈ $0.35 |
 | Aynı oturumda sonraki şarkı | ≈ $0.08 |
 
-Kapasite yoksa sırasıyla `g5.2xlarge` → `g6e.xlarge` denenir. Bütçe alarmı: $30/ay (`yue-monthly`).
+Kapasite yoksa sırasıyla `g5.2xlarge` → `g6e.xlarge` → `g6.xlarge` → `g5.xlarge` denenir (son ikisi aynı 24 GB GPU, daha az RAM). Bütçe alarmı: $30/ay (`yue-monthly`).
 
 ## Repo
 | Yol | İçerik |
