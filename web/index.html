@@ -108,9 +108,12 @@
       <section class="panel library">
         <div class="lib-head">
           <h2 id="view-title">Kütüphane</h2>
-          <div class="lib-actions">
-            <button type="button" id="folder-rename" class="btn ghost small hidden">Yeniden adlandır</button>
-            <button type="button" id="folder-delete" class="btn ghost small danger hidden">Klasörü sil</button>
+          <div class="lib-actions menu-wrap hidden" id="folder-menu">
+            <button type="button" id="folder-menu-btn" class="btn ghost small menu-btn" aria-haspopup="true" aria-expanded="false" title="Klasör işlemleri">⋯</button>
+            <div class="menu hidden" id="folder-menu-list" role="menu">
+              <button type="button" id="folder-rename" class="menu-item" role="menuitem">Yeniden adlandır</button>
+              <button type="button" id="folder-delete" class="menu-item danger" role="menuitem">Klasörü sil</button>
+            </div>
           </div>
         </div>
 

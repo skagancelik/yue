@@ -78,6 +78,7 @@ function activeTab() {
 
 function setView(next) {
   view = { tab: view.tab, ...next };
+  closeFolderMenu();
   if (view.type === "folder" && view.id && view.id !== UNFILED) lastFolderId = view.id;
   try { localStorage.setItem("yue.view", JSON.stringify(view)); } catch (_) {}
   if (source && source.folder_id && (!currentFolder() || source.folder_id !== view.id)) clearSource();
@@ -133,6 +134,18 @@ $("first-folder").addEventListener("submit", (event) => {
   newFolder($("first-folder-name").value);
   $("first-folder-name").value = "";
 });
+
+function closeFolderMenu() {
+  $("folder-menu-list").classList.add("hidden");
+  $("folder-menu-btn").setAttribute("aria-expanded", "false");
+}
+$("folder-menu-btn").addEventListener("click", (event) => {
+  event.stopPropagation();
+  const open = $("folder-menu-list").classList.toggle("hidden") === false;
+  $("folder-menu-btn").setAttribute("aria-expanded", String(open));
+});
+document.addEventListener("click", closeFolderMenu);
+document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeFolderMenu(); });
 
 $("folder-rename").addEventListener("click", async () => {
   const folder = currentFolder();
@@ -531,8 +544,7 @@ function render() {
   $("jobs-block").classList.toggle("hidden", tab !== "jobs");
   $("jobs-head").classList.toggle("hidden", !!folder);
   $("jobs-title").textContent = view.type === "liked" ? "Beğenilen şarkılar" : "Klasörsüz üretimler";
-  $("folder-rename").classList.toggle("hidden", !folder);
-  $("folder-delete").classList.toggle("hidden", !folder);
+  $("folder-menu").classList.toggle("hidden", !folder);
   $("empty-text").textContent = view.type === "liked"
     ? "Henüz beğendiğin şarkı yok. Bir üretimdeki ♡ ikonuna dokun."
     : folder ? "Bu klasörde henüz üretim yok. Kaynak şarkılar sekmesinden bir şarkı seçip cover oluştur." : "Burada üretim yok.";
