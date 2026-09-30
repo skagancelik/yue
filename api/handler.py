@@ -138,7 +138,7 @@ def ensure_gpu(quick=False):
                 ec2.modify_instance_attribute(InstanceId=INSTANCE_ID, InstanceType={"Value": instance_type})
                 gpu["type"] = instance_type
             ec2.start_instances(InstanceIds=[INSTANCE_ID])
-            set_worker(requested_type=instance_type, start_requested_at=now(),
+            set_worker(requested_type=instance_type, start_requested_at=now(), idle_minutes=IDLE_MINUTES,
                        state="booting", message="GPU sunucusu açılıyor")
             return "pending"
         except ClientError as error:
@@ -154,12 +154,17 @@ def ensure_gpu(quick=False):
     return "no_capacity"
 
 
-def stop_gpu(reason):
+def stop_gpu(reason, failed=False):
+    """failed=True (dead agent, stuck box) and an existing worker error are latched: the state stays
+    "error" so the janitor does not restart a broken box on its own (only a user action retries)."""
     gpu = describe_gpu()
     if gpu["state"] in ("running", "pending"):
         print(f"stopping GPU: {reason}")
         ec2.stop_instances(InstanceIds=[INSTANCE_ID])
-        set_worker(state="stopping", message=reason)
+        if failed or get_worker().get("state") == "error":
+            set_worker(state="error", message=reason)
+        else:
+            set_worker(state="stopping", message=reason)
         return True
     return False
 
@@ -281,6 +286,19 @@ def create_upload(body):
     return {"key": key, "url": url, "content_type": content_type}
 
 
+def check_upload_size(key):
+    """The presigned PUT does not cap the size; enforce the limit on what was really stored."""
+    try:
+        head = s3.head_object(Bucket=BUCKET, Key=key)
+    except ClientError:
+        raise HttpError(400, "Yüklenen dosya bulunamadı, tekrar yükleyin")
+    if head["ContentLength"] > MAX_UPLOAD:
+        if key.startswith("uploads/"):
+            s3.delete_object(Bucket=BUCKET, Key=key)
+        raise HttpError(400, "Dosya en fazla 40 MB olabilir")
+    return head
+
+
 def create_jobs(body):
     folder_id = validate_text(body, "folder_id", 32, required=False)
     source_id = validate_text(body, "source_id", 32, required=False)
@@ -293,14 +311,14 @@ def create_jobs(body):
         upload_key = validate_text(body, "upload_key", 200)
     if not re.fullmatch(r"(uploads|sources)/[0-9a-f]{32}\.[a-z0-9]+", upload_key):
         raise HttpError(400, "Geçersiz dosya anahtarı")
-    try:
-        s3.head_object(Bucket=BUCKET, Key=upload_key)
-    except ClientError:
-        raise HttpError(400, "Yüklenen dosya bulunamadı, tekrar yükleyin")
+    check_upload_size(upload_key)
     style = validate_text(body, "style", 2000)
     lyrics = validate_text(body, "lyrics", 16000)
     title = validate_text(body, "title", 120, required=False) or "Adsız cover"
     source_name = validate_text(body, "source_name", 200, required=False)
+    auto_stems = body.get("stems", True)
+    if not isinstance(auto_stems, bool):
+        raise HttpError(400, "stems true/false olmalı")
     variants = body.get("variants", 1)
     if variants not in (1, 2):
         raise HttpError(400, "variants 1 veya 2 olmalı")
@@ -325,6 +343,8 @@ def create_jobs(body):
             job["folder_id"] = folder_id
         if source_id:
             job["source_id"] = source_id
+        if not auto_stems:
+            job["auto_stems"] = False
         table.put_item(Item=job)
         jobs.append(job)
     gpu_state = ensure_gpu(quick=True)
@@ -433,8 +453,12 @@ def rename_folder(folder_id, body):
 
 def delete_folder(folder_id):
     get_folder(folder_id)
-    if any(job.get("folder_id") == folder_id for job in all_items(OWNER)):
+    jobs = all_items(OWNER)
+    if any(job.get("folder_id") == folder_id for job in jobs):
         raise HttpError(409, "Klasörde üretimler var; önce onları silin veya taşıyın")
+    folder_sources = {s["id"] for s in all_items(SOURCES) if s.get("folder_id") == folder_id}
+    if any(job.get("source_id") in folder_sources and job.get("status") in ("queued", "running") for job in jobs):
+        raise HttpError(409, "Klasördeki bir kaynağı kullanan üretim sürüyor; bitmesini bekleyin")
     for source in all_items(SOURCES):
         if source.get("folder_id") == folder_id:
             s3.delete_object(Bucket=BUCKET, Key=source["key"])
@@ -485,10 +509,7 @@ def create_source(folder_id, body):
         raise HttpError(400, "Geçersiz dosya anahtarı")
     source_id = uuid.uuid4().hex
     key = f"sources/{source_id}.{upload_key.rsplit('.', 1)[1]}"
-    try:
-        head = s3.head_object(Bucket=BUCKET, Key=upload_key)
-    except ClientError:
-        raise HttpError(400, "Yüklenen dosya bulunamadı, tekrar yükleyin")
+    head = check_upload_size(upload_key)
     s3.copy_object(Bucket=BUCKET, Key=key, CopySource={"Bucket": BUCKET, "Key": upload_key},
                    ContentType=head.get("ContentType") or "application/octet-stream", MetadataDirective="REPLACE")
     source = {"id": source_id, "owner": SOURCES, "folder_id": folder_id, "key": key,
@@ -499,6 +520,8 @@ def create_source(folder_id, body):
 
 def delete_source(source_id):
     source = get_item(source_id, SOURCES, "Kaynak şarkı bulunamadı")
+    if any(job.get("source_id") == source_id and job.get("status") in ("queued", "running") for job in all_items(OWNER)):
+        raise HttpError(409, "Bu kaynağı kullanan bir üretim sürüyor; bitmesini bekleyin veya iptal edin")
     s3.delete_object(Bucket=BUCKET, Key=source["key"])
     table.delete_item(Key={"id": source_id})
     return {"deleted": source_id}
@@ -637,7 +660,7 @@ def janitor(event, context):
     agent_dead = t - max(heartbeat, gpu["launched_at"]) > STALE_HEARTBEAT_SECONDS
     # First boot installs drivers/models and can take ~30 min; the agent heartbeats throughout.
     if agent_dead:
-        stop_gpu("Worker yanıt vermiyor, GPU durduruldu")
+        stop_gpu("Worker yanıt vermiyor, GPU durduruldu", failed=True)
     elif not queue and not running and idle_for > (IDLE_MINUTES + 5) * 60:
         stop_gpu(f"{IDLE_MINUTES} dakikadan uzun süre boşta")
     return {"gpu": gpu["state"], "idle_for": idle_for, "queued": len(queue), "running": len(running)}

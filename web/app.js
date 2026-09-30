@@ -469,7 +469,7 @@ $("create").addEventListener("click", async () => {
     const body = {
       folder_id: currentFolder().id, title: $("title").value.trim(),
       style: $("style").value.trim(), lyrics: $("lyrics").value.trim(),
-      variants: Number($("variants").value), seed,
+      variants: Number($("variants").value), seed, stems: $("auto-stems").checked,
     };
     if (source.id) body.source_id = source.id;
     else { body.upload_key = source.key; body.source_name = source.name; }

@@ -250,3 +250,5 @@ h3 { margin: 0; font-size: 14px; font-weight: 600; color: var(--muted); text-tra
   padding: 8px 12px; border-radius: 8px; cursor: pointer; }
 .menu-item:hover { background: var(--panel); }
 .menu-item.danger:hover { color: var(--err); }
+.check { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13.5px; cursor: pointer; }
+.check input { width: auto; accent-color: var(--accent); }

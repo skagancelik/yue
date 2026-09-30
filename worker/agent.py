@@ -172,18 +172,19 @@ def recover_orphans():
 
 
 def claim(job):
+    """Returns the claimed item as stored (with its real started_at), or None if someone else took it."""
     try:
-        table.update_item(
+        return table.update_item(
             Key={"id": job["id"]},
             UpdateExpression="SET #s = :r, stage = :st, message = :m, started_at = :t, updated_at = :t, "
                              "attempts = if_not_exists(attempts, :zero) + :one REMOVE #q",
             ConditionExpression="#s = :queued",
             ExpressionAttributeNames={"#s": "status", "#q": "queue"},
             ExpressionAttributeValues={":r": "running", ":st": "preparing", ":m": "Hazırlanıyor",
-                                       ":t": now(), ":queued": "queued", ":zero": 0, ":one": 1})
-        return True
+                                       ":t": now(), ":queued": "queued", ":zero": 0, ":one": 1},
+            ReturnValues="ALL_NEW")["Attributes"]
     except table.meta.client.exceptions.ConditionalCheckFailedException:
-        return False
+        return None
 
 
 STAGE_TEXT = {
@@ -267,13 +268,13 @@ def process(job):
             s3.upload_file(str(abc), BUCKET, keys["abc_key"], ExtraArgs={"ContentType": "text/plain; charset=utf-8"})
         result = status.get("result") or {}
         timing = result.get("timing") or {}
-        stems = stems_fields()
+        stems = stems_fields(job)
         update_job(job_id, status="succeeded", stage="done", message="Hazır", finished_at=now(), **stems,
                    duration=Decimal(str(round(float(result.get("audio_seconds") or 0), 1))),
                    truncated=status["status"] == "truncated",
-                   gpu_seconds=now() - int(job.get("started_at") or now()),
+                   gpu_seconds=now() - int(job.get("started_at") or now()),   # wall seconds of this attempt
                    timing=json.loads(json.dumps(timing), parse_float=lambda v: str(v)), **keys)
-        if stems:
+        if stems.get("stems_status") == "queued":
             queue_stems(job_id)
         log("done", job_id)
     except Exception as error:
@@ -286,11 +287,13 @@ def process(job):
         touch()
 
 
-def stems_fields():
+def stems_fields(job):
     """Every finished cover is split into instrumental + vocals right away (same GPU session)."""
+    if job.get("auto_stems") is False:
+        return {}
     if Path("/opt/yue/sep/.installed").exists():
         return {"stems_status": "queued", "stems_message": "Sırada"}
-    return {}
+    return {"stems_status": "failed", "stems_error": "Vokal ayırıcı bu sunucuda kurulu değil; teknik ekibe haber verin"}
 
 
 def queue_stems(job_id):
@@ -384,26 +387,44 @@ def work_loop():
     table.update_item(Key={"id": WORKER_ID}, UpdateExpression="SET boot_seconds = :b",
                       ExpressionAttributeValues={":b": int(time.monotonic() - BOOT_STARTED)})
     touch()
+    kinds = {}          # job id -> "stems" / "cover" for the running work
+    idle_minutes, idle_checked = IDLE_MINUTES, 0.0
     while True:
+        if time.time() - idle_checked > 30:
+            # The API publishes the current idle limit; /etc/yue.env is frozen at first boot.
+            idle_checked = time.time()
+            try:
+                value = table.get_item(Key={"id": WORKER_ID}, ProjectionExpression="idle_minutes").get("Item", {}).get("idle_minutes")
+                if value:
+                    idle_minutes = int(value)
+            except Exception:
+                traceback.print_exc()
         if len(active) < MAX_PARALLEL:
             queue = table.query(IndexName="queue", KeyConditionExpression=Key("queue").eq("q"),
-                                Limit=MAX_PARALLEL)["Items"]
+                                Limit=25)["Items"]
+            # Covers first; only ONE separation at a time (it shares the GPU with YuE2 and falls back to CPU on OOM).
+            queue.sort(key=lambda item: item.get("kind") == "stems")
             for job in queue:
                 if len(active) >= MAX_PARALLEL:
                     break
-                if claim(job):
-                    log("claimed", job.get("kind", "cover"), job["id"])
-                    target = process_stems if job.get("kind") == "stems" else process
-                    thread = threading.Thread(target=target, args=(job,), daemon=True)
+                kind = "stems" if job.get("kind") == "stems" else "cover"
+                if kind == "stems" and any(kinds.get(i) == "stems" for i in active):
+                    continue
+                claimed = claim(job)
+                if claimed:
+                    log("claimed", kind, job["id"])
+                    target = process_stems if kind == "stems" else process
+                    thread = threading.Thread(target=target, args=(claimed,), daemon=True)
                     active[job["id"]] = thread
+                    kinds[job["id"]] = kind
                     thread.start()
         busy = bool(active)
         with state_lock:
             state.update(state="busy" if busy else "ready",
                          message=f"{len(active)} şarkı üretiliyor" if busy else "Hazır, iş bekliyor")
         idle = time.time() - last_activity
-        if not busy and idle > IDLE_MINUTES * 60:
-            set_state("stopping", f"{IDLE_MINUTES} dk boşta kaldı, GPU kapanıyor")
+        if not busy and idle > idle_minutes * 60:
+            set_state("stopping", f"{idle_minutes} dk boşta kaldı, GPU kapanıyor")
             subprocess.run(["systemctl", "stop", "yue2-serve.service"])
             subprocess.run(["systemctl", "poweroff"])
             time.sleep(300)
