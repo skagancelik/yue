@@ -577,7 +577,11 @@ def janitor(event, context):
                               ExpressionAttributeValues={":f": "failed", ":e": "Vokal ayırma zaman aşımına uğradı, tekrar deneyin"})
 
     if gpu["state"] == "stopped":
-        if queue:
+        if queue and worker.get("state") == "error":
+            # The box failed and powered itself off; restarting it unattended would loop
+            # (and bill) forever. The next user action (new job, stems, start) retries.
+            print("jobs waiting but worker errored; not auto-starting")
+        elif queue:
             print("jobs waiting, starting GPU:", ensure_gpu())
         elif worker.get("state") not in (None, "stopped"):
             set_worker(state="stopped", message="GPU kapalı (boşta)")

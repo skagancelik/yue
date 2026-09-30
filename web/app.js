@@ -618,6 +618,7 @@ function renderGpu() {
     else { cls = "warm"; text = worker.message || "Hazırlanıyor"; }
   } else { text = state; }
   if (worker.state === "no_capacity") { cls = "bad"; text = "GPU kapasitesi yok, tekrar deneniyor"; }
+  if (worker.state === "error" && state !== "running") { cls = "bad"; text = "Sunucu hata verdi · yeni işte tekrar denenir"; }
   pill.className = `pill ${cls}`;
   $("gpu-text").textContent = text;
   pill.title = [worker.message, gpu.gpu.type].filter(Boolean).join(" · ");

@@ -30,7 +30,7 @@ MAX_ATTEMPTS = 2
 TASKS = "tasks"           # owner of non-cover queue items (e.g. stem separation)
 SEPARATOR = "/opt/yue/sep/.venv/bin/audio-separator"
 SEPARATOR_MODELS = "/opt/yue/sep/models"
-SEPARATOR_MODEL = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"   # keep in sync with setup.sh
+SEPARATOR_MODEL = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"   # keep in sync with setup-separator.sh
 
 table = boto3.resource("dynamodb", region_name=REGION).Table(TABLE)
 s3 = boto3.client("s3", region_name=REGION)
@@ -302,6 +302,8 @@ def process_stems(task):
         job = table.get_item(Key={"id": job_id}).get("Item")
         if not job or not job.get("flac_key"):
             raise RuntimeError("Şarkı bulunamadı")
+        if not Path("/opt/yue/sep/.installed").exists():
+            raise RuntimeError("Vokal ayırıcı bu sunucuda kurulamadı; teknik ekibe haber verin")
         update_job(job_id, stems_status="running", stems_message="Vokal ayrılıyor")
         source = work / "cover.flac"
         s3.download_file(BUCKET, job["flac_key"], str(source))

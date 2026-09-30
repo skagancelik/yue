@@ -7,8 +7,6 @@ TURBO_REPO=https://github.com/NoizAI/YuE2-Turbo.git
 TURBO_REF=7c88813bfff9db9127f11c35b9e1b72983ded200   # pinned, bump deliberately
 NVIDIA_DRIVER=580-server-open
 MODELS="m-a-p/YuE2-3B m-a-p/YuE2-Vae m-a-p/SheetSage2 m-a-p/MERT-v2-FullSong"
-SEPARATOR_VERSION=0.47.0                                   # pinned, bump deliberately
-SEPARATOR_MODEL=model_bs_roformer_ep_317_sdr_12.9755.ckpt  # keep in sync with agent.py
 
 YUE=/opt/yue
 export HF_HOME=$YUE/hf
@@ -67,18 +65,9 @@ if [ ! -f $YUE/hf/.models-ok ]; then
   touch $YUE/hf/.models-ok
 fi
 
-# 4. Vocal/instrumental separation (BS-RoFormer via audio-separator) in its own venv.
-if [ "$(cat $YUE/sep/.installed 2>/dev/null)" != "$SEPARATOR_VERSION" ]; then
-  step "Vokal ayırıcı kuruluyor"
-  rm -rf $YUE/sep/.venv
-  mkdir -p $YUE/sep/models
-  uv venv -q --python 3.12 $YUE/sep/.venv
-  UV_CACHE_DIR=$YUE/uv-cache uv pip install -q --python $YUE/sep/.venv/bin/python torch==2.10.0 torchaudio==2.10.0 \
-    --index-url https://download.pytorch.org/whl/cu128
-  UV_CACHE_DIR=$YUE/uv-cache uv pip install -q --python $YUE/sep/.venv/bin/python "audio-separator[gpu]==$SEPARATOR_VERSION"
-  rm -rf $YUE/uv-cache
-  $YUE/sep/.venv/bin/audio-separator --model_file_dir $YUE/sep/models -m $SEPARATOR_MODEL --download_model_only
-  echo $SEPARATOR_VERSION > $YUE/sep/.installed
+# 4. Vocal separation. Optional: a failure only disables "Vokali ayır", never covers.
+if ! bash $(dirname "$0")/setup-separator.sh; then
+  echo "::warn:: Vokal ayırıcı kurulamadı; cover üretimi etkilenmez"
 fi
 
 mkdir -p $YUE/data $YUE/work
