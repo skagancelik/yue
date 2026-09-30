@@ -2,22 +2,24 @@
 
 const $ = (id) => document.getElementById(id);
 const API = "/api";
-const STYLE_PRESETS = [
-  "Turkish", "English", "pop", "rock", "synthwave", "lo-fi hip hop", "R&B", "jazz", "acoustic ballad",
-  "EDM", "Anatolian rock", "arabesque", "trap", "orchestral", "female vocal", "male vocal",
-  "breathy vocal", "powerful vocal", "piano", "acoustic guitar", "electric guitar", "808 bass",
-  "strings", "90 BPM", "120 BPM", "melancholic", "uplifting", "dreamy",
-];
 const STATUS_TEXT = { queued: "Sırada", running: "Üretiliyor", succeeded: "Hazır", failed: "Hata", cancelled: "İptal" };
-const GPU_HOURLY_USD = { "g6.2xlarge": 1.2, "g5.2xlarge": 1.46, "g6e.xlarge": 2.24 };
+const GPU_HOURLY_USD = { "g6.2xlarge": 1.2, "g5.2xlarge": 1.46, "g6e.xlarge": 2.24, "g6.xlarge": 0.98, "g5.xlarge": 1.23 };
+const UNFILED = "unfiled";
 
 let passcode = null;
-let upload = null;          // {key, name}
+let source = null;          // selected source for the next job: {id?, key?, name, url}
+let folders = [];
+let sources = [];
 let jobs = [];
+let styles = [];
 let gpu = null;
 let pollTimer = null;
+let view = { type: "folder", id: null };   // or {type: "liked"} / {type: "folder", id: UNFILED}
 
-try { passcode = localStorage.getItem("yue.passcode"); } catch (_) { /* private mode */ }
+try {
+  passcode = localStorage.getItem("yue.passcode");
+  view = JSON.parse(localStorage.getItem("yue.view")) || view;
+} catch (_) { /* private mode */ }
 
 async function api(path, options = {}) {
   const response = await fetch(API + path, {
@@ -28,6 +30,11 @@ async function api(path, options = {}) {
   if (response.status === 401) { showLogin(body.error); throw new Error(body.error || "Yetkisiz"); }
   if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
   return body;
+}
+
+function report(error) {
+  console.warn(error);
+  alert(error.message || String(error));
 }
 
 // ---------------------------------------------------------------- auth
@@ -52,10 +59,90 @@ $("login-form").addEventListener("submit", async (event) => {
 function start() {
   $("login").classList.add("hidden");
   $("app").classList.remove("hidden");
+  loadStyles();
   refresh();
 }
 
-// ---------------------------------------------------------------- upload
+// ---------------------------------------------------------------- views & folders
+
+function currentFolder() {
+  return view.type === "folder" ? folders.find((f) => f.id === view.id) : null;
+}
+
+function setView(next) {
+  view = next;
+  try { localStorage.setItem("yue.view", JSON.stringify(view)); } catch (_) {}
+  if (source && source.folder_id && (!currentFolder() || source.folder_id !== view.id)) clearSource();
+  render();
+}
+
+function unfiledJobs() {
+  const known = new Set(folders.map((f) => f.id));
+  return jobs.filter((j) => !j.folder_id || !known.has(j.folder_id));
+}
+
+function renderSidebar() {
+  const list = $("folder-list");
+  const items = folders.map((f) => ({ id: f.id, name: f.name, count: jobs.filter((j) => j.folder_id === f.id).length }));
+  const unfiled = unfiledJobs();
+  if (unfiled.length) items.push({ id: UNFILED, name: "Klasörsüz", count: unfiled.length, muted: true });
+  list.replaceChildren(...items.map((item) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "nav-item" + (view.type === "folder" && view.id === item.id ? " active" : "") + (item.muted ? " muted" : "");
+    button.innerHTML = `<span class="nav-icon">📁</span><span class="nav-name"></span><span class="nav-count"></span>`;
+    button.querySelector(".nav-name").textContent = item.name;
+    button.querySelector(".nav-count").textContent = item.count || "";
+    button.addEventListener("click", () => setView({ type: "folder", id: item.id }));
+    return button;
+  }));
+  const liked = jobs.filter((j) => j.liked).length;
+  $("liked-count").textContent = liked || "";
+  document.querySelector('.nav-item[data-view="liked"]').classList.toggle("active", view.type === "liked");
+}
+
+document.querySelector('.nav-item[data-view="liked"]').addEventListener("click", () => setView({ type: "liked" }));
+
+async function newFolder(name) {
+  name = (name || "").trim();
+  if (!name) return;
+  try {
+    const folder = await api("/folders", { method: "POST", body: JSON.stringify({ name }) });
+    folders = [folder, ...folders];
+    setView({ type: "folder", id: folder.id });
+  } catch (error) { report(error); }
+}
+
+$("folder-new").addEventListener("click", () => newFolder(prompt("Klasör adı")));
+$("first-folder").addEventListener("submit", (event) => {
+  event.preventDefault();
+  newFolder($("first-folder-name").value);
+  $("first-folder-name").value = "";
+});
+
+$("folder-rename").addEventListener("click", async () => {
+  const folder = currentFolder();
+  const name = folder && prompt("Yeni ad", folder.name);
+  if (!name || !name.trim()) return;
+  try {
+    const updated = await api(`/folders/${folder.id}`, { method: "PATCH", body: JSON.stringify({ name: name.trim() }) });
+    folders = folders.map((f) => (f.id === updated.id ? updated : f));
+    render();
+  } catch (error) { report(error); }
+});
+
+$("folder-delete").addEventListener("click", async () => {
+  const folder = currentFolder();
+  if (!folder || !confirm(`"${folder.name}" klasörü ve içindeki kaynak şarkılar silinsin mi?`)) return;
+  try {
+    await api(`/folders/${folder.id}`, { method: "DELETE" });
+    folders = folders.filter((f) => f.id !== folder.id);
+    sources = sources.filter((s) => s.folder_id !== folder.id);
+    setView({ type: "folder", id: folders[0] ? folders[0].id : null });
+  } catch (error) { report(error); }
+});
+
+// ---------------------------------------------------------------- source selection & upload
 
 const drop = $("drop");
 ["dragenter", "dragover"].forEach((type) => drop.addEventListener(type, (e) => { e.preventDefault(); drop.classList.add("over"); }));
@@ -65,25 +152,42 @@ drop.addEventListener("drop", (event) => {
   if (event.dataTransfer.files[0]) handleFile(event.dataTransfer.files[0]);
 });
 $("file").addEventListener("change", (event) => event.target.files[0] && handleFile(event.target.files[0]));
-$("file-clear").addEventListener("click", () => {
-  upload = null;
+$("file-clear").addEventListener("click", clearSource);
+
+function clearSource() {
+  source = null;
   $("file").value = "";
   $("drop-file").classList.add("hidden");
   $("drop-empty").classList.remove("hidden");
   drop.classList.remove("has-file");
   updateCreate();
-});
+  renderSources();
+}
 
-async function handleFile(file) {
-  $("create-error").textContent = "";
-  if (file.size > 40 * 1024 * 1024) { $("create-error").textContent = "Dosya en fazla 40 MB olabilir"; return; }
-  upload = null;
+function showSource(name, url, uploaded) {
   drop.classList.add("has-file");
   $("drop-empty").classList.add("hidden");
   $("drop-file").classList.remove("hidden");
-  $("file-name").textContent = file.name;
-  $("file-preview").src = URL.createObjectURL(file);
-  $("upload-bar").style.width = "0";
+  $("file-name").textContent = name;
+  if (url) $("file-preview").src = url;
+  $("upload-bar").style.width = uploaded ? "100%" : "0";
+}
+
+function selectSource(item) {
+  source = { id: item.id, name: item.name, url: item.url, folder_id: item.folder_id };
+  showSource(item.name, item.url, true);
+  if (!$("title").value) $("title").value = item.name.replace(/\.[^.]+$/, "") + " (cover)";
+  updateCreate();
+  renderSources();
+}
+
+async function handleFile(file) {
+  $("create-error").textContent = "";
+  const folder = currentFolder();
+  if (!folder) { $("create-error").textContent = "Önce bir klasör seç"; return; }
+  if (file.size > 40 * 1024 * 1024) { $("create-error").textContent = "Dosya en fazla 40 MB olabilir"; return; }
+  source = null;
+  showSource(file.name, URL.createObjectURL(file), false);
   if (!$("title").value) $("title").value = file.name.replace(/\.[^.]+$/, "") + " (cover)";
   updateCreate();
   try {
@@ -92,9 +196,13 @@ async function handleFile(file) {
       method: "POST", body: JSON.stringify({ filename: file.name, size: file.size, content_type: contentType }),
     });
     await putWithProgress(signed.url, file, signed.content_type, (fraction) => {
-      $("upload-bar").style.width = `${Math.round(fraction * 100)}%`;
+      $("upload-bar").style.width = `${Math.round(fraction * 95)}%`;
     });
-    upload = { key: signed.key, name: file.name };
+    const saved = await api(`/folders/${folder.id}/sources`, {
+      method: "POST", body: JSON.stringify({ upload_key: signed.key, name: file.name }),
+    });
+    sources = [saved, ...sources];
+    selectSource(saved);
   } catch (error) {
     $("create-error").textContent = "Yükleme başarısız: " + error.message;
   }
@@ -113,20 +221,88 @@ function putWithProgress(url, file, contentType, onProgress) {
   });
 }
 
-// ---------------------------------------------------------------- form
+function renderSources() {
+  const folder = currentFolder();
+  $("sources-block").classList.toggle("hidden", !folder);
+  if (!folder) return;
+  const list = sources.filter((s) => s.folder_id === folder.id);
+  $("sources-count").textContent = list.length ? `${list.length} kayıt` : "";
+  $("sources-empty").classList.toggle("hidden", list.length > 0);
+  const container = $("sources");
+  const existing = new Map([...container.children].map((node) => [node.dataset.id, node]));
+  container.replaceChildren(...list.map((item) => {
+    let node = existing.get(item.id);
+    if (!node) {
+      node = $("source-tpl").content.firstElementChild.cloneNode(true);
+      node.dataset.id = item.id;
+      node.querySelector("audio").src = item.url;
+    }
+    node.classList.toggle("selected", !!source && source.id === item.id);
+    node.querySelector(".source-name").textContent = item.name;
+    const used = jobs.filter((j) => j.source_id === item.id).length;
+    node.querySelector(".source-meta").textContent = [used ? `${used} üretim` : "", fmtAgo(item.created_at)].filter(Boolean).join(" · ");
+    node.querySelector(".use").textContent = source && source.id === item.id ? "Seçili" : "Bununla üret";
+    node.querySelector(".use").onclick = () => { selectSource(item); window.scrollTo({ top: 0, behavior: "smooth" }); };
+    node.querySelector(".remove").onclick = async () => {
+      if (!confirm(`"${item.name}" kaynak şarkısı silinsin mi? (Üretilen cover'lar kalır.)`)) return;
+      try {
+        await api(`/sources/${item.id}`, { method: "DELETE" });
+        sources = sources.filter((s) => s.id !== item.id);
+        if (source && source.id === item.id) clearSource();
+        renderSources();
+      } catch (error) { report(error); }
+    };
+    return node;
+  }));
+}
 
-STYLE_PRESETS.forEach((preset) => {
-  const chip = document.createElement("button");
-  chip.type = "button";
-  chip.className = "chip";
-  chip.textContent = "+ " + preset;
-  chip.addEventListener("click", () => {
-    const current = $("style").value.trim().replace(/,\s*$/, "");
-    $("style").value = current ? `${current}, ${preset}` : preset;
-    updateCreate();
-  });
-  $("style-chips").appendChild(chip);
+// ---------------------------------------------------------------- style sets
+
+async function loadStyles() {
+  try { styles = (await api("/styles")).styles; } catch (error) { console.warn(error); }
+  renderStyles();
+}
+
+function renderStyles() {
+  const select = $("style-set");
+  const selected = select.value;
+  select.replaceChildren(new Option("Kayıtlı stil seti seç…", ""), ...styles.map((s) => new Option(s.name, s.id)));
+  select.value = styles.some((s) => s.id === selected) ? selected : "";
+  $("style-delete").classList.toggle("hidden", !select.value);
+}
+
+$("style-set").addEventListener("change", () => {
+  const set = styles.find((s) => s.id === $("style-set").value);
+  if (set) $("style").value = set.style;
+  $("style-delete").classList.toggle("hidden", !set);
+  updateCreate();
 });
+
+$("style-save").addEventListener("click", async () => {
+  const style = $("style").value.trim();
+  if (!style) { $("create-error").textContent = "Önce stil alanına bir şeyler yaz"; return; }
+  const name = prompt("Stil setinin adı", style.split(",")[0].trim());
+  if (!name || !name.trim()) return;
+  try {
+    const saved = await api("/styles", { method: "POST", body: JSON.stringify({ name: name.trim(), style }) });
+    styles = [saved, ...styles];
+    renderStyles();
+    $("style-set").value = saved.id;
+    $("style-delete").classList.remove("hidden");
+  } catch (error) { report(error); }
+});
+
+$("style-delete").addEventListener("click", async () => {
+  const set = styles.find((s) => s.id === $("style-set").value);
+  if (!set || !confirm(`"${set.name}" stil seti silinsin mi?`)) return;
+  try {
+    await api(`/styles/${set.id}`, { method: "DELETE" });
+    styles = styles.filter((s) => s.id !== set.id);
+    renderStyles();
+  } catch (error) { report(error); }
+});
+
+// ---------------------------------------------------------------- form
 
 document.querySelectorAll(".chip.tag").forEach((button) => button.addEventListener("click", () => {
   const area = $("lyrics");
@@ -141,17 +317,21 @@ document.querySelectorAll(".chip.tag").forEach((button) => button.addEventListen
 }));
 
 ["style", "lyrics", "title"].forEach((id) => $(id).addEventListener("input", updateCreate));
+$("style").addEventListener("input", () => {
+  const set = styles.find((s) => s.id === $("style-set").value);
+  if (set && set.style !== $("style").value.trim()) { $("style-set").value = ""; $("style-delete").classList.add("hidden"); }
+});
 
 function updateCreate() {
-  const ready = upload && $("style").value.trim() && $("lyrics").value.trim();
+  const ready = source && (source.id || source.key) && currentFolder() && $("style").value.trim() && $("lyrics").value.trim();
   $("create").disabled = !ready;
   const variants = Number($("variants").value);
   if (!gpu) { $("create-note").textContent = ""; return; }
   const state = gpu.gpu.state;
   const warm = state === "running" && ["ready", "busy"].includes(gpu.worker.state);
   $("create-note").textContent = warm
-    ? `GPU açık · şarkı başına ~3–5 dk`
-    : `GPU kapalı · açılış ~3 dk + üretim ~3–5 dk${variants === 2 ? " (2 varyasyon birlikte)" : ""}`;
+    ? `GPU açık · şarkı başına ~1–3 dk`
+    : `GPU kapalı · açılış ~3 dk + üretim ~1–3 dk${variants === 2 ? " (2 varyasyon birlikte)" : ""}`;
 }
 $("variants").addEventListener("change", updateCreate);
 
@@ -160,16 +340,16 @@ $("create").addEventListener("click", async () => {
   $("create").disabled = true;
   try {
     const seed = $("seed").value === "" ? undefined : Number($("seed").value);
-    const result = await api("/jobs", {
-      method: "POST",
-      body: JSON.stringify({
-        upload_key: upload.key, source_name: upload.name, title: $("title").value.trim(),
-        style: $("style").value.trim(), lyrics: $("lyrics").value.trim(),
-        variants: Number($("variants").value), seed,
-      }),
-    });
+    const body = {
+      folder_id: currentFolder().id, title: $("title").value.trim(),
+      style: $("style").value.trim(), lyrics: $("lyrics").value.trim(),
+      variants: Number($("variants").value), seed,
+    };
+    if (source.id) body.source_id = source.id;
+    else { body.upload_key = source.key; body.source_name = source.name; }
+    const result = await api("/jobs", { method: "POST", body: JSON.stringify(body) });
     jobs = [...result.jobs, ...jobs];
-    renderJobs();
+    render();
     refresh();
   } catch (error) {
     $("create-error").textContent = error.message;
@@ -199,16 +379,51 @@ function fmtAgo(epochMs) {
   return new Date(epochMs).toLocaleDateString("tr-TR");
 }
 
+function visibleJobs() {
+  if (view.type === "liked") return jobs.filter((j) => j.liked);
+  if (view.id === UNFILED) return unfiledJobs();
+  return jobs.filter((j) => j.folder_id === view.id);
+}
+
+function render() {
+  // Fall back to a real folder when the remembered one is gone.
+  if (view.type === "folder" && view.id !== UNFILED && !currentFolder()) {
+    view = folders[0] ? { type: "folder", id: folders[0].id } : { type: "folder", id: null };
+  }
+  if (view.type === "folder" && view.id === UNFILED && !unfiledJobs().length && folders[0]) {
+    view = { type: "folder", id: folders[0].id };
+  }
+  const folder = currentFolder();
+  const onboarding = !folders.length && !unfiledJobs().length && view.type !== "liked";
+  $("no-folder").classList.toggle("hidden", !onboarding);
+  document.querySelector(".library").classList.toggle("hidden", onboarding);
+  $("create-panel").classList.toggle("hidden", !folder);
+  document.querySelector(".layout").classList.toggle("single", !folder);
+  $("create-folder-name").textContent = folder ? folder.name : "";
+  $("view-title").textContent = view.type === "liked" ? "♥ Beğendiklerim" : folder ? folder.name : "Klasörsüz";
+  $("jobs-title").textContent = view.type === "liked" ? "Beğenilen şarkılar" : "Üretimler";
+  $("folder-rename").classList.toggle("hidden", !folder);
+  $("folder-delete").classList.toggle("hidden", !folder);
+  $("empty-text").textContent = view.type === "liked"
+    ? "Henüz beğendiğin şarkı yok. Bir üretimdeki ♡ ikonuna dokun."
+    : folder ? "Bu klasörde henüz üretim yok. Bir kaynak şarkı seçip cover oluştur." : "Burada üretim yok.";
+  renderSidebar();
+  renderSources();
+  renderJobs();
+  updateCreate();
+}
+
 function renderJobs() {
   const container = $("jobs");
+  const list = visibleJobs();
   const playing = new Map();
   container.querySelectorAll("audio").forEach((a) => { if (!a.paused) playing.set(a.dataset.id, a); });
-  $("empty").classList.toggle("hidden", jobs.length > 0);
-  $("lib-count").textContent = jobs.length ? `${jobs.length} kayıt` : "";
+  $("empty").classList.toggle("hidden", list.length > 0);
+  $("lib-count").textContent = list.length ? `${list.length} kayıt` : "";
 
   const existing = new Map([...container.children].map((node) => [node.dataset.id, node]));
   const fragment = document.createDocumentFragment();
-  for (const job of jobs) {
+  for (const job of list) {
     let node = existing.get(job.id);
     if (!node) node = $("job-tpl").content.firstElementChild.cloneNode(true);
     fillJob(node, job, playing.has(job.id));
@@ -228,6 +443,29 @@ function fillJob(node, job, isPlaying) {
   badge.className = `badge ${job.status}`;
   badge.textContent = STATUS_TEXT[job.status] || job.status;
 
+  const folder = folders.find((f) => f.id === job.folder_id);
+  const folderLine = node.querySelector(".job-folder");
+  folderLine.classList.toggle("hidden", view.type !== "liked");
+  folderLine.textContent = `📁 ${folder ? folder.name : "Klasörsüz"}`;
+
+  const like = node.querySelector(".like");
+  like.textContent = job.liked ? "♥" : "♡";
+  like.classList.toggle("on", !!job.liked);
+  like.setAttribute("aria-pressed", String(!!job.liked));
+  like.title = job.liked ? "Beğeniyi kaldır" : "Beğen";
+  like.onclick = async () => {
+    const liked = !job.liked;
+    job.liked = liked;
+    render();
+    try {
+      await api(`/jobs/${job.id}`, { method: "PATCH", body: JSON.stringify({ liked }) });
+    } catch (error) {
+      job.liked = !liked;
+      render();
+      report(error);
+    }
+  };
+
   const active = job.status === "queued" || job.status === "running";
   node.querySelector(".job-progress").classList.toggle("hidden", !active);
   if (active) {
@@ -237,7 +475,7 @@ function fillJob(node, job, isPlaying) {
     if (job.status === "queued" && gpu && gpu.worker && gpu.worker.message && gpu.gpu.state !== "stopped") {
       stage = `Sırada · ${gpu.worker.message}`;
     }
-    node.querySelector(".stage").textContent = `${stage} · ${fmtDuration(elapsed)}`;
+    node.querySelector(".stage").textContent = `${stage} · geçen süre ${fmtDuration(elapsed)}`;
   }
 
   const player = node.querySelector(".player");
@@ -263,29 +501,50 @@ function fillJob(node, job, isPlaying) {
   meta.push(fmtAgo(job.created_at));
   node.querySelector(".meta").textContent = meta.join(" · ");
 
+  const move = node.querySelector(".move");
+  const targets = folders.filter((f) => f.id !== job.folder_id);
+  move.classList.toggle("hidden", !targets.length);
+  if (document.activeElement !== move) {
+    move.replaceChildren(new Option("Taşı…", ""), ...targets.map((f) => new Option(`📁 ${f.name}`, f.id)));
+  }
+  move.onchange = async () => {
+    const folderId = move.value;
+    if (!folderId) return;
+    try {
+      const updated = await api(`/jobs/${job.id}`, { method: "PATCH", body: JSON.stringify({ folder_id: folderId }) });
+      jobs = jobs.map((j) => (j.id === job.id ? updated : j));
+      render();
+    } catch (error) { report(error); }
+  };
+
   node.querySelector(".reuse").onclick = () => reuse(job);
   node.querySelector(".cancel").onclick = async () => { await api(`/jobs/${job.id}/cancel`, { method: "POST" }); refresh(); };
   node.querySelector(".delete").onclick = async () => {
     if (!confirm(`"${job.title}" silinsin mi?`)) return;
     await api(`/jobs/${job.id}`, { method: "DELETE" });
     jobs = jobs.filter((j) => j.id !== job.id);
-    renderJobs();
+    render();
   };
 }
 
 function reuse(job) {
+  if (job.folder_id && folders.some((f) => f.id === job.folder_id) && view.id !== job.folder_id) {
+    setView({ type: "folder", id: job.folder_id });
+  }
+  if (!currentFolder()) {
+    $("create-error").textContent = "Tekrar kullanmak için şarkıyı önce bir klasöre taşı";
+    return;
+  }
   $("title").value = job.title;
   $("style").value = job.style;
   $("lyrics").value = job.lyrics;
-  if (job.source_url && job.upload_key) {
-    // Same uploaded source can be reused while it is kept (30 days).
-    upload = { key: job.upload_key, name: job.source_name || "kaynak" };
-    drop.classList.add("has-file");
-    $("drop-empty").classList.add("hidden");
-    $("drop-file").classList.remove("hidden");
-    $("file-name").textContent = upload.name;
-    $("file-preview").src = job.source_url;
-    $("upload-bar").style.width = "100%";
+  const saved = job.source_id && sources.find((s) => s.id === job.source_id);
+  if (saved) {
+    selectSource(saved);
+  } else if (job.source_url && job.upload_key) {
+    // Older jobs point at a temporary upload (kept 30 days).
+    source = { key: job.upload_key, name: job.source_name || "kaynak", url: job.source_url };
+    showSource(source.name, source.url, true);
   }
   updateCreate();
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -329,12 +588,13 @@ $("gpu-stop").addEventListener("click", async () => {
 async function refresh() {
   clearTimeout(pollTimer);
   try {
-    const [status, list] = await Promise.all([api("/status"), api("/jobs")]);
+    const [status, library] = await Promise.all([api("/status"), api("/library")]);
     gpu = status;
-    jobs = list.jobs;
+    folders = library.folders;
+    sources = library.sources;
+    jobs = library.jobs;
     renderGpu();
-    renderJobs();
-    updateCreate();
+    render();
   } catch (error) {
     console.warn(error);
     if (!passcode) return;

@@ -30,9 +30,20 @@
       </div>
     </header>
 
+    <div class="shell">
+    <aside class="sidebar">
+      <button type="button" class="nav-item" data-view="liked"><span class="nav-icon heart">♥</span><span class="nav-name">Beğendiklerim</span><span id="liked-count" class="nav-count"></span></button>
+      <div class="side-head">
+        <span>Klasörler</span>
+        <button type="button" id="folder-new" class="link small" title="Yeni klasör">+ Yeni</button>
+      </div>
+      <nav id="folder-list" class="folder-list"></nav>
+    </aside>
+
     <main class="layout">
-      <section class="panel create">
+      <section id="create-panel" class="panel create">
         <h2>Cover oluştur</h2>
+        <p class="muted small folder-hint">Klasör: <b id="create-folder-name"></b></p>
 
         <label class="field-label">1 · Kaynak şarkı</label>
         <div id="drop" class="drop">
@@ -40,7 +51,7 @@
           <div id="drop-empty">
             <div class="drop-icon">⬆</div>
             <div><b>Ses dosyası sürükle</b> veya tıkla</div>
-            <div class="muted small">MP3, WAV, FLAC, M4A… en fazla 40 MB. Melodi bu kayıttan çıkarılır.</div>
+            <div class="muted small">MP3, WAV, FLAC, M4A… en fazla 40 MB. Melodi bu kayıttan çıkarılır; dosya klasörde saklanır.</div>
           </div>
           <div id="drop-file" class="hidden">
             <div class="file-row"><span id="file-name"></span><button type="button" id="file-clear" class="link">değiştir</button></div>
@@ -53,8 +64,12 @@
         <input id="title" type="text" maxlength="120" placeholder="Örn. Gece Yarısı (synthwave cover)">
 
         <label class="field-label" for="style">3 · Stil</label>
-        <textarea id="style" rows="3" maxlength="2000" placeholder="Dil, tür, enstrümanlar, vokal karakteri, tempo… Örn: Turkish, synthwave, male breathy vocal, analog synths, gated drums, 105 BPM"></textarea>
-        <div id="style-chips" class="chips"></div>
+        <div class="style-sets">
+          <select id="style-set" aria-label="Stil seti"><option value="">Kayıtlı stil seti seç…</option></select>
+          <button type="button" id="style-save" class="btn ghost small" title="Yazdığın stili set olarak kaydet">Kaydet</button>
+          <button type="button" id="style-delete" class="btn ghost small danger hidden" title="Seçili seti sil">Sil</button>
+        </div>
+        <textarea id="style" rows="3" maxlength="2000" placeholder="Örn: Acoustic Guitar, Strings, Stereo, Minimalist, HiRes Audio, Catchy Drums, Brilliant"></textarea>
 
         <label class="field-label" for="lyrics">4 · Şarkı sözleri</label>
         <div class="tagbar">
@@ -86,17 +101,55 @@
 
       <section class="panel library">
         <div class="lib-head">
-          <h2>Kütüphane</h2>
-          <span id="lib-count" class="muted small"></span>
+          <h2 id="view-title">Kütüphane</h2>
+          <div class="lib-actions">
+            <button type="button" id="folder-rename" class="btn ghost small hidden">Yeniden adlandır</button>
+            <button type="button" id="folder-delete" class="btn ghost small danger hidden">Klasörü sil</button>
+          </div>
         </div>
-        <div id="jobs" class="jobs"></div>
-        <div id="empty" class="empty hidden">
-          <div class="drop-icon">🎧</div>
-          <p>Henüz cover yok. Soldan bir şarkı yükleyip başla.</p>
+
+        <div id="sources-block" class="block hidden">
+          <div class="block-head"><h3>Kaynak şarkılar</h3><span id="sources-count" class="muted small"></span></div>
+          <div id="sources" class="sources"></div>
+          <p id="sources-empty" class="muted small hidden">Bu klasöre henüz kaynak şarkı yüklenmedi. Soldaki alana bir kayıt bırak.</p>
+        </div>
+
+        <div class="block">
+          <div class="block-head"><h3 id="jobs-title">Üretimler</h3><span id="lib-count" class="muted small"></span></div>
+          <div id="jobs" class="jobs"></div>
+          <div id="empty" class="empty hidden">
+            <div class="drop-icon">🎧</div>
+            <p id="empty-text">Henüz üretim yok.</p>
+          </div>
         </div>
       </section>
+
+      <section id="no-folder" class="panel onboarding hidden">
+        <div class="drop-icon">📁</div>
+        <h2>İlk klasörünü oluştur</h2>
+        <p class="muted">Her şarkı için bir klasör aç; kaynak kayıtların ve üretimlerin orada toplanır.</p>
+        <form id="first-folder" class="inline-form">
+          <input id="first-folder-name" type="text" maxlength="80" placeholder="Örn. Gitmek Zor" required>
+          <button class="btn primary" type="submit">Oluştur</button>
+        </form>
+      </section>
     </main>
+    </div>
   </div>
+
+  <template id="source-tpl">
+    <div class="source">
+      <div class="source-top">
+        <span class="source-name"></span>
+        <span class="source-meta muted small"></span>
+      </div>
+      <audio controls preload="none"></audio>
+      <div class="source-actions">
+        <button type="button" class="btn ghost small use">Bununla üret</button>
+        <button type="button" class="btn ghost small danger remove">Sil</button>
+      </div>
+    </div>
+  </template>
 
   <template id="job-tpl">
     <article class="job">
@@ -107,8 +160,12 @@
             <div class="job-title"></div>
             <div class="job-style muted small"></div>
           </div>
-          <span class="badge"></span>
+          <div class="job-flags">
+            <span class="badge"></span>
+            <button type="button" class="like" title="Beğen" aria-pressed="false">♡</button>
+          </div>
         </div>
+        <div class="job-folder muted small hidden"></div>
         <div class="job-progress hidden">
           <div class="stage small"></div>
           <div class="progress indeterminate"><div></div></div>
@@ -120,6 +177,7 @@
           <a class="btn ghost small dl-flac hidden" target="_blank" rel="noopener">FLAC</a>
           <a class="btn ghost small dl-abc hidden" target="_blank" rel="noopener">Nota</a>
           <button class="btn ghost small reuse">Tekrar kullan</button>
+          <select class="move small-select" title="Başka klasöre taşı"></select>
           <button class="btn ghost small cancel hidden">İptal</button>
           <button class="btn ghost small danger delete hidden">Sil</button>
           <span class="meta muted small"></span>

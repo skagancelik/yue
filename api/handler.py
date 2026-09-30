@@ -28,6 +28,10 @@ IDLE_MINUTES = int(os.environ.get("YUE_IDLE_MINUTES", "10"))
 PASSCODE_PARAM = os.environ.get("YUE_PASSCODE_PARAM", "/yue/passcode")
 
 OWNER = "me"
+# Other item kinds share the table and the `history` index under their own owner value.
+FOLDERS = "folders"
+SOURCES = "sources"
+STYLES = "styles"
 WORKER_ID = "__worker__"
 MAX_UPLOAD = 40 * 1024 * 1024
 AUDIO_EXT = {"mp3", "wav", "flac", "m4a", "aac", "ogg", "opus", "webm", "aiff", "aif"}
@@ -173,6 +177,25 @@ def recent_jobs(limit=60):
                        ScanIndexForward=False, Limit=limit)["Items"]
 
 
+def all_items(owner):
+    """Every item of one kind, newest first (single user, so this stays small)."""
+    items, kwargs = [], {}
+    while True:
+        page = table.query(IndexName="history", KeyConditionExpression=Key("owner").eq(owner),
+                           ScanIndexForward=False, **kwargs)
+        items += page["Items"]
+        if "LastEvaluatedKey" not in page:
+            return items
+        kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+
+
+def get_item(item_id, owner, missing):
+    item = table.get_item(Key={"id": item_id}).get("Item")
+    if not item or item.get("owner") != owner:
+        raise HttpError(404, missing)
+    return item
+
+
 def presign_get(key, filename=None):
     params = {"Bucket": BUCKET, "Key": key}
     if filename:
@@ -189,7 +212,8 @@ def public_job(job):
     out = {k: job.get(k) for k in (
         "id", "group", "title", "style", "lyrics", "seed", "status", "stage", "message", "error",
         "created_at", "started_at", "finished_at", "duration", "source_name", "tokens", "variant",
-        "upload_key")}
+        "upload_key", "folder_id", "source_id")}
+    out["liked"] = bool(job.get("liked"))
     if job.get("status") == "succeeded":
         if job.get("mp3_key"):
             out["mp3_url"] = presign_get(job["mp3_key"])
@@ -204,10 +228,7 @@ def public_job(job):
 
 
 def get_job(job_id):
-    job = table.get_item(Key={"id": job_id}).get("Item")
-    if not job or job.get("owner") != OWNER:
-        raise HttpError(404, "Kayıt bulunamadı")
-    return job
+    return get_item(job_id, OWNER, "Kayıt bulunamadı")
 
 
 def validate_text(body, name, limit, required=True):
@@ -237,8 +258,16 @@ def create_upload(body):
 
 
 def create_jobs(body):
-    upload_key = validate_text(body, "upload_key", 200)
-    if not re.fullmatch(r"uploads/[0-9a-f]{32}\.[a-z0-9]+", upload_key):
+    folder_id = validate_text(body, "folder_id", 32, required=False)
+    source_id = validate_text(body, "source_id", 32, required=False)
+    if folder_id:
+        get_folder(folder_id)
+    if source_id:
+        source = get_item(source_id, SOURCES, "Kaynak şarkı bulunamadı")
+        upload_key, body["source_name"] = source["key"], source["name"]
+    else:
+        upload_key = validate_text(body, "upload_key", 200)
+    if not re.fullmatch(r"(uploads|sources)/[0-9a-f]{32}\.[a-z0-9]+", upload_key):
         raise HttpError(400, "Geçersiz dosya anahtarı")
     try:
         s3.head_object(Bucket=BUCKET, Key=upload_key)
@@ -268,6 +297,10 @@ def create_jobs(body):
             "title": title, "style": style, "lyrics": lyrics, "seed": seed + index * 7919,
             "upload_key": upload_key, "source_name": source_name,
         }
+        if folder_id:
+            job["folder_id"] = folder_id
+        if source_id:
+            job["source_id"] = source_id
         table.put_item(Item=job)
         jobs.append(job)
     gpu_state = ensure_gpu()
@@ -298,6 +331,130 @@ def delete_job(job_id):
     return {"deleted": job_id}
 
 
+def update_job_fields(job_id, body):
+    job = get_job(job_id)
+    fields = {}
+    if "liked" in body:
+        if not isinstance(body["liked"], bool):
+            raise HttpError(400, "liked true/false olmalı")
+        fields["liked"] = body["liked"]
+    if "folder_id" in body:
+        folder_id = body["folder_id"]
+        if folder_id is not None:
+            if not isinstance(folder_id, str):
+                raise HttpError(400, "Geçersiz klasör")
+            get_folder(folder_id)
+        fields["folder_id"] = folder_id
+    if "title" in body:
+        fields["title"] = validate_text(body, "title", 120)
+    if not fields:
+        raise HttpError(400, "Değişiklik yok")
+    # update_item, not put_item: the GPU agent writes progress to the same item concurrently.
+    sets = {k: v for k, v in fields.items() if v is not None}
+    removes = [k for k, v in fields.items() if v is None]
+    expression = ("SET " + ", ".join(f"#{k} = :{k}" for k in sets)) if sets else ""
+    if removes:
+        expression += " REMOVE " + ", ".join(f"#{k}" for k in removes)
+    kwargs = {"ExpressionAttributeValues": {f":{k}": v for k, v in sets.items()}} if sets else {}
+    table.update_item(Key={"id": job_id}, UpdateExpression=expression.strip(),
+                      ExpressionAttributeNames={f"#{k}": k for k in fields}, **kwargs)
+    return public_job(get_job(job_id))
+
+
+# ---------------------------------------------------------------- folders & sources
+
+def get_folder(folder_id):
+    return get_item(folder_id, FOLDERS, "Klasör bulunamadı")
+
+
+def public_folder(folder):
+    return {k: folder.get(k) for k in ("id", "name", "created_at")}
+
+
+def create_folder(body):
+    folder = {"id": uuid.uuid4().hex, "owner": FOLDERS, "name": validate_text(body, "name", 80),
+              "created_at": now() * 1000}
+    table.put_item(Item=folder)
+    return public_folder(folder)
+
+
+def rename_folder(folder_id, body):
+    folder = get_folder(folder_id)
+    folder["name"] = validate_text(body, "name", 80)
+    table.put_item(Item=folder)
+    return public_folder(folder)
+
+
+def delete_folder(folder_id):
+    get_folder(folder_id)
+    if any(job.get("folder_id") == folder_id for job in all_items(OWNER)):
+        raise HttpError(409, "Klasörde üretimler var; önce onları silin veya taşıyın")
+    for source in all_items(SOURCES):
+        if source.get("folder_id") == folder_id:
+            s3.delete_object(Bucket=BUCKET, Key=source["key"])
+            table.delete_item(Key={"id": source["id"]})
+    table.delete_item(Key={"id": folder_id})
+    return {"deleted": folder_id}
+
+
+def public_source(source):
+    out = {k: source.get(k) for k in ("id", "folder_id", "name", "created_at", "size")}
+    out["url"] = presign_get(source["key"])
+    return out
+
+
+def create_source(folder_id, body):
+    """Keep an upload permanently (uploads/ expires after 30 days) as a folder's source song."""
+    get_folder(folder_id)
+    upload_key = validate_text(body, "upload_key", 200)
+    if not re.fullmatch(r"uploads/[0-9a-f]{32}\.[a-z0-9]+", upload_key):
+        raise HttpError(400, "Geçersiz dosya anahtarı")
+    source_id = uuid.uuid4().hex
+    key = f"sources/{source_id}.{upload_key.rsplit('.', 1)[1]}"
+    try:
+        head = s3.head_object(Bucket=BUCKET, Key=upload_key)
+    except ClientError:
+        raise HttpError(400, "Yüklenen dosya bulunamadı, tekrar yükleyin")
+    s3.copy_object(Bucket=BUCKET, Key=key, CopySource={"Bucket": BUCKET, "Key": upload_key},
+                   ContentType=head.get("ContentType") or "application/octet-stream", MetadataDirective="REPLACE")
+    source = {"id": source_id, "owner": SOURCES, "folder_id": folder_id, "key": key,
+              "name": validate_text(body, "name", 200), "size": head["ContentLength"], "created_at": now() * 1000}
+    table.put_item(Item=source)
+    return public_source(source)
+
+
+def delete_source(source_id):
+    source = get_item(source_id, SOURCES, "Kaynak şarkı bulunamadı")
+    s3.delete_object(Bucket=BUCKET, Key=source["key"])
+    table.delete_item(Key={"id": source_id})
+    return {"deleted": source_id}
+
+
+def library():
+    return {"folders": [public_folder(f) for f in all_items(FOLDERS)],
+            "sources": [public_source(s) for s in all_items(SOURCES)],
+            "jobs": [public_job(j) for j in all_items(OWNER)]}
+
+
+# ---------------------------------------------------------------- style sets
+
+def public_style(item):
+    return {k: item.get(k) for k in ("id", "name", "style", "created_at")}
+
+
+def create_style(body):
+    item = {"id": uuid.uuid4().hex, "owner": STYLES, "name": validate_text(body, "name", 80),
+            "style": validate_text(body, "style", 2000), "created_at": now() * 1000}
+    table.put_item(Item=item)
+    return public_style(item)
+
+
+def delete_style(style_id):
+    get_item(style_id, STYLES, "Stil seti bulunamadı")
+    table.delete_item(Key={"id": style_id})
+    return {"deleted": style_id}
+
+
 def status():
     gpu = describe_gpu()
     worker = get_worker()
@@ -318,6 +475,16 @@ ROUTES = [
     ("POST", r"/api/uploads", lambda e, m: create_upload(parse_body(e))),
     ("POST", r"/api/jobs", lambda e, m: create_jobs(parse_body(e))),
     ("GET", r"/api/jobs", lambda e, m: {"jobs": [public_job(j) for j in recent_jobs()]}),
+    ("GET", r"/api/library", lambda e, m: library()),
+    ("PATCH", r"/api/jobs/([0-9a-f]{32})", lambda e, m: update_job_fields(m.group(1), parse_body(e))),
+    ("POST", r"/api/folders", lambda e, m: create_folder(parse_body(e))),
+    ("PATCH", r"/api/folders/([0-9a-f]{32})", lambda e, m: rename_folder(m.group(1), parse_body(e))),
+    ("DELETE", r"/api/folders/([0-9a-f]{32})", lambda e, m: delete_folder(m.group(1))),
+    ("POST", r"/api/folders/([0-9a-f]{32})/sources", lambda e, m: create_source(m.group(1), parse_body(e))),
+    ("DELETE", r"/api/sources/([0-9a-f]{32})", lambda e, m: delete_source(m.group(1))),
+    ("GET", r"/api/styles", lambda e, m: {"styles": [public_style(i) for i in all_items(STYLES)]}),
+    ("POST", r"/api/styles", lambda e, m: create_style(parse_body(e))),
+    ("DELETE", r"/api/styles/([0-9a-f]{32})", lambda e, m: delete_style(m.group(1))),
     ("GET", r"/api/jobs/([0-9a-f]{32})", lambda e, m: public_job(get_job(m.group(1)))),
     ("POST", r"/api/jobs/([0-9a-f]{32})/cancel", lambda e, m: cancel_job(m.group(1))),
     ("DELETE", r"/api/jobs/([0-9a-f]{32})", lambda e, m: delete_job(m.group(1))),
