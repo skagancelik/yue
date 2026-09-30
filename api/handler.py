@@ -11,6 +11,8 @@ import json
 import os
 import re
 import time
+import unicodedata
+from urllib.parse import quote
 import uuid
 
 import boto3
@@ -208,7 +210,12 @@ def get_item(item_id, owner, missing):
 def presign_get(key, filename=None):
     params = {"Bucket": BUCKET, "Key": key}
     if filename:
-        params["ResponseContentDisposition"] = f'attachment; filename="{filename}"'
+        # S3 only accepts ISO-8859-1 header values, so Turkish letters (ı, ş, ğ) go in the
+        # RFC 5987 filename* parameter, with an ASCII fallback for old clients.
+        ascii_name = unicodedata.normalize("NFKD", filename.replace("ı", "i").replace("İ", "I"))
+        ascii_name = ascii_name.encode("ascii", "ignore").decode() or "cover"
+        params["ResponseContentDisposition"] = (
+            f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(filename)}')
     return s3.generate_presigned_url("get_object", Params=params, ExpiresIn=6 * 3600)
 
 
