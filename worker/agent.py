@@ -11,6 +11,7 @@ import subprocess
 import threading
 import time
 import traceback
+import uuid
 from pathlib import Path
 
 import boto3
@@ -266,11 +267,14 @@ def process(job):
             s3.upload_file(str(abc), BUCKET, keys["abc_key"], ExtraArgs={"ContentType": "text/plain; charset=utf-8"})
         result = status.get("result") or {}
         timing = result.get("timing") or {}
-        update_job(job_id, status="succeeded", stage="done", message="Hazır", finished_at=now(),
+        stems = stems_fields()
+        update_job(job_id, status="succeeded", stage="done", message="Hazır", finished_at=now(), **stems,
                    duration=Decimal(str(round(float(result.get("audio_seconds") or 0), 1))),
                    truncated=status["status"] == "truncated",
                    gpu_seconds=now() - int(job.get("started_at") or now()),
                    timing=json.loads(json.dumps(timing), parse_float=lambda v: str(v)), **keys)
+        if stems:
+            queue_stems(job_id)
         log("done", job_id)
     except Exception as error:
         traceback.print_exc()
@@ -280,6 +284,25 @@ def process(job):
         subprocess.run(["rm", "-rf", str(work)])
         active.pop(job_id, None)
         touch()
+
+
+def stems_fields():
+    """Every finished cover is split into instrumental + vocals right away (same GPU session)."""
+    if Path("/opt/yue/sep/.installed").exists():
+        return {"stems_status": "queued", "stems_message": "Sırada"}
+    return {}
+
+
+def queue_stems(job_id):
+    """Queue the split after the cover is stored; a queueing problem must never fail the cover itself."""
+    try:
+        created = now()
+        table.put_item(Item={"id": uuid.uuid4().hex, "owner": TASKS, "kind": "stems", "job_id": job_id,
+                             "queue": "q", "status": "queued", "stage": "queued", "message": "Sırada",
+                             "created_at": created * 1000, "updated_at": created})
+    except Exception:
+        traceback.print_exc()
+        update_job(job_id, stems_status="failed", stems_error="Vokal ayırma sıraya alınamadı")
 
 
 def separate(source, out, env=None):

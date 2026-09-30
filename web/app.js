@@ -14,11 +14,14 @@ let jobs = [];
 let styles = [];
 let gpu = null;
 let pollTimer = null;
-let view = { type: "folder", id: null };   // or {type: "liked"} / {type: "folder", id: UNFILED}
+let view = { type: "folder", id: null, tab: "sources" };   // or {type: "liked"} / {type: "folder", id: UNFILED}
+let lastFolderId = null;
+const pendingEdit = new Set();   // freshly uploaded sources open their style/lyrics editor
+let uploads = [];                // uploads in flight: {name, fraction, error}
 
 try {
   passcode = localStorage.getItem("yue.passcode");
-  view = JSON.parse(localStorage.getItem("yue.view")) || view;
+  view = { ...view, ...(JSON.parse(localStorage.getItem("yue.view")) || {}) };
 } catch (_) { /* private mode */ }
 
 async function api(path, options = {}) {
@@ -69,8 +72,13 @@ function currentFolder() {
   return view.type === "folder" ? folders.find((f) => f.id === view.id) : null;
 }
 
+function activeTab() {
+  return view.type === "folder" && currentFolder() ? (view.tab === "jobs" ? "jobs" : "sources") : "jobs";
+}
+
 function setView(next) {
-  view = next;
+  view = { tab: view.tab, ...next };
+  if (view.type === "folder" && view.id && view.id !== UNFILED) lastFolderId = view.id;
   try { localStorage.setItem("yue.view", JSON.stringify(view)); } catch (_) {}
   if (source && source.folder_id && (!currentFolder() || source.folder_id !== view.id)) clearSource();
   render();
@@ -98,10 +106,16 @@ function renderSidebar() {
   }));
   const liked = jobs.filter((j) => j.liked).length;
   $("liked-count").textContent = liked || "";
-  document.querySelector('.nav-item[data-view="liked"]').classList.toggle("active", view.type === "liked");
+  document.querySelector('.topnav-item[data-top="folders"]').classList.toggle("active", view.type === "folder");
+  document.querySelector('.topnav-item[data-top="liked"]').classList.toggle("active", view.type === "liked");
 }
 
-document.querySelector('.nav-item[data-view="liked"]').addEventListener("click", () => setView({ type: "liked" }));
+document.querySelector('.topnav-item[data-top="liked"]').addEventListener("click", () => setView({ type: "liked" }));
+document.querySelector('.topnav-item[data-top="folders"]').addEventListener("click", () => {
+  const id = folders.some((f) => f.id === lastFolderId) ? lastFolderId : (folders[0] ? folders[0].id : null);
+  setView({ type: "folder", id });
+});
+document.querySelectorAll(".subtab").forEach((button) => button.addEventListener("click", () => setView({ ...view, tab: button.dataset.tab })));
 
 async function newFolder(name) {
   name = (name || "").trim();
@@ -177,9 +191,30 @@ function selectSource(item) {
   source = { id: item.id, name: item.name, url: item.url, folder_id: item.folder_id };
   showSource(item.name, item.url, true);
   if (!$("title").value) $("title").value = item.name.replace(/\.[^.]+$/, "") + " (cover)";
+  // A source remembers the style and lyrics it was last used with.
+  if (item.style) { $("style").value = item.style; $("style-set").value = ""; $("style-delete").classList.add("hidden"); }
+  if (item.lyrics) $("lyrics").value = item.lyrics;
   updateCreate();
   renderSources();
 }
+
+async function saveSourceText(item, style, lyrics, note) {
+  const body = { style, lyrics };
+  if (note !== undefined) body.note = note;
+  const updated = await api(`/sources/${item.id}`, { method: "PATCH", body: JSON.stringify(body) });
+  sources = sources.map((s) => (s.id === updated.id ? { ...s, style: updated.style, lyrics: updated.lyrics, note: updated.note } : s));
+  return updated;
+}
+
+$("source-text-save").addEventListener("click", async () => {
+  if (!source || !source.id) return;
+  const note = $("create-note");
+  try {
+    await saveSourceText(source, $("style").value.trim(), $("lyrics").value.trim());
+    note.textContent = "Stil ve söz kaynak şarkıya kaydedildi";
+    renderSources();
+  } catch (error) { report(error); }
+});
 
 async function handleFile(file) {
   $("create-error").textContent = "";
@@ -221,13 +256,60 @@ function putWithProgress(url, file, contentType, onProgress) {
   });
 }
 
+function renderUploads() {
+  $("upload-list").replaceChildren(...uploads.map((item) => {
+    const row = document.createElement("div");
+    row.className = "upload-row" + (item.error ? " failed" : "");
+    row.innerHTML = `<span class="upload-name"></span><span class="upload-state small"></span><div class="progress"><div></div></div>`;
+    row.querySelector(".upload-name").textContent = item.name;
+    row.querySelector(".upload-state").textContent = item.error ? item.error : `${Math.round(item.fraction * 100)}%`;
+    row.querySelector(".progress > div").style.width = `${Math.round(item.fraction * 100)}%`;
+    return row;
+  }));
+}
+
+async function uploadSources(files) {
+  const folder = currentFolder();
+  if (!folder || !files.length) return;
+  uploads = uploads.filter((u) => !u.error);
+  await Promise.all(files.map(async (file) => {
+    const entry = { name: file.name, fraction: 0, error: "" };
+    uploads.push(entry);
+    renderUploads();
+    try {
+      if (file.size > 40 * 1024 * 1024) throw new Error("en fazla 40 MB");
+      const signed = await api("/uploads", {
+        method: "POST", body: JSON.stringify({ filename: file.name, size: file.size, content_type: file.type || "application/octet-stream" }),
+      });
+      await putWithProgress(signed.url, file, signed.content_type, (fraction) => { entry.fraction = fraction * 0.95; renderUploads(); });
+      const saved = await api(`/folders/${folder.id}/sources`, {
+        method: "POST", body: JSON.stringify({ upload_key: signed.key, name: file.name }),
+      });
+      sources = [saved, ...sources];
+      pendingEdit.add(saved.id);
+      uploads = uploads.filter((u) => u !== entry);
+    } catch (error) {
+      entry.error = "yüklenemedi: " + error.message;
+    }
+    renderUploads();
+    renderSources();
+  }));
+}
+
+$("source-upload").addEventListener("click", () => $("source-file").click());
+$("source-file").addEventListener("change", (event) => { uploadSources([...event.target.files]); event.target.value = ""; });
+const sourcesBlock = $("sources-block");
+["dragenter", "dragover"].forEach((type) => sourcesBlock.addEventListener(type, (e) => { e.preventDefault(); sourcesBlock.classList.add("over"); }));
+["dragleave", "drop"].forEach((type) => sourcesBlock.addEventListener(type, () => sourcesBlock.classList.remove("over")));
+sourcesBlock.addEventListener("drop", (event) => { event.preventDefault(); uploadSources([...event.dataTransfer.files]); });
+
 function renderSources() {
   const folder = currentFolder();
-  $("sources-block").classList.toggle("hidden", !folder);
   if (!folder) return;
   const list = sources.filter((s) => s.folder_id === folder.id);
-  $("sources-count").textContent = list.length ? `${list.length} kayıt` : "";
-  $("sources-empty").classList.toggle("hidden", list.length > 0);
+  $("sources-count").textContent = list.length || "";
+  $("sources-empty").classList.toggle("hidden", list.length > 0 || uploads.length > 0);
+  $("source-text-save").classList.toggle("hidden", !(source && source.id));
   const container = $("sources");
   const existing = new Map([...container.children].map((node) => [node.dataset.id, node]));
   container.replaceChildren(...list.map((item) => {
@@ -237,12 +319,43 @@ function renderSources() {
       node.dataset.id = item.id;
       node.querySelector("audio").src = item.url;
     }
+    if (pendingEdit.delete(item.id)) node.classList.add("editing");
     node.classList.toggle("selected", !!source && source.id === item.id);
     node.querySelector(".source-name").textContent = item.name;
     const used = jobs.filter((j) => j.source_id === item.id).length;
-    node.querySelector(".source-meta").textContent = [used ? `${used} üretim` : "", fmtAgo(item.created_at)].filter(Boolean).join(" · ");
+    const saved = item.style || item.lyrics;
+    node.querySelector(".source-meta").textContent = [used ? `${used} üretim` : "", saved ? "✓ stil ve söz kayıtlı" : "", fmtAgo(item.created_at)].filter(Boolean).join(" · ");
     node.querySelector(".use").textContent = source && source.id === item.id ? "Seçili" : "Bununla üret";
     node.querySelector(".use").onclick = () => { selectSource(item); window.scrollTo({ top: 0, behavior: "smooth" }); };
+    // Do not overwrite what is being typed while the library refreshes.
+    if (!node.classList.contains("editing")) {
+      node.querySelector(".src-style").value = item.style || "";
+      node.querySelector(".src-lyrics").value = item.lyrics || "";
+    }
+    const noteLine = node.querySelector(".source-note");
+    noteLine.textContent = item.note || "";
+    noteLine.classList.toggle("hidden", !item.note);
+    if (!node.classList.contains("editing")) node.querySelector(".src-note").value = item.note || "";
+    node.querySelector(".rename").onclick = async () => {
+      const name = prompt("Kaynak şarkı adı", item.name);
+      if (!name || !name.trim() || name.trim() === item.name) return;
+      try {
+        const updated = await api(`/sources/${item.id}`, { method: "PATCH", body: JSON.stringify({ name: name.trim() }) });
+        sources = sources.map((s) => (s.id === updated.id ? { ...s, name: updated.name } : s));
+        renderSources();
+      } catch (error) { report(error); }
+    };
+    node.querySelector(".edit-text").onclick = () => node.classList.toggle("editing");
+    node.querySelector(".src-save").onclick = async () => {
+      const note = node.querySelector(".src-note");
+      try {
+        await saveSourceText(item, node.querySelector(".src-style").value.trim(), node.querySelector(".src-lyrics").value.trim(), node.querySelector(".src-note").value.trim());
+        note.textContent = "Kaydedildi";
+        node.classList.remove("editing");
+        if (source && source.id === item.id) selectSource(sources.find((s) => s.id === item.id));
+        else renderSources();
+      } catch (error) { note.textContent = error.message; }
+    };
     node.querySelector(".remove").onclick = async () => {
       if (!confirm(`"${item.name}" kaynak şarkısı silinsin mi? (Üretilen cover'lar kalır.)`)) return;
       try {
@@ -349,6 +462,9 @@ $("create").addEventListener("click", async () => {
     else { body.upload_key = source.key; body.source_name = source.name; }
     const result = await api("/jobs", { method: "POST", body: JSON.stringify(body) });
     jobs = [...result.jobs, ...jobs];
+    view = { ...view, tab: "jobs" };
+    try { localStorage.setItem("yue.view", JSON.stringify(view)); } catch (_) {}
+    window.scrollTo({ top: 0 });
     render();
     refresh();
   } catch (error) {
@@ -394,19 +510,32 @@ function render() {
     view = { type: "folder", id: folders[0].id };
   }
   const folder = currentFolder();
+  const tab = activeTab();
   const onboarding = !folders.length && !unfiledJobs().length && view.type !== "liked";
   $("no-folder").classList.toggle("hidden", !onboarding);
   document.querySelector(".library").classList.toggle("hidden", onboarding);
-  $("create-panel").classList.toggle("hidden", !folder);
-  document.querySelector(".layout").classList.toggle("single", !folder);
+  const showCreate = !!folder && tab === "sources";
+  $("create-panel").classList.toggle("hidden", !showCreate);
+  document.querySelector(".layout").classList.toggle("single", !showCreate);
+  $("shell").classList.toggle("no-side", view.type === "liked");
+  document.querySelector(".sidebar").classList.toggle("hidden", view.type === "liked");
   $("create-folder-name").textContent = folder ? folder.name : "";
   $("view-title").textContent = view.type === "liked" ? "♥ Beğendiklerim" : folder ? folder.name : "Klasörsüz";
-  $("jobs-title").textContent = view.type === "liked" ? "Beğenilen şarkılar" : "Üretimler";
+  $("subtabs").classList.toggle("hidden", !folder);
+  document.querySelectorAll(".subtab").forEach((b) => {
+    const on = b.dataset.tab === tab;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-selected", String(on));
+  });
+  $("sources-block").classList.toggle("hidden", !(folder && tab === "sources"));
+  $("jobs-block").classList.toggle("hidden", tab !== "jobs");
+  $("jobs-head").classList.toggle("hidden", !!folder);
+  $("jobs-title").textContent = view.type === "liked" ? "Beğenilen şarkılar" : "Klasörsüz üretimler";
   $("folder-rename").classList.toggle("hidden", !folder);
   $("folder-delete").classList.toggle("hidden", !folder);
   $("empty-text").textContent = view.type === "liked"
     ? "Henüz beğendiğin şarkı yok. Bir üretimdeki ♡ ikonuna dokun."
-    : folder ? "Bu klasörde henüz üretim yok. Bir kaynak şarkı seçip cover oluştur." : "Burada üretim yok.";
+    : folder ? "Bu klasörde henüz üretim yok. Kaynak şarkılar sekmesinden bir şarkı seçip cover oluştur." : "Burada üretim yok.";
   renderSidebar();
   renderSources();
   renderJobs();
@@ -420,6 +549,7 @@ function renderJobs() {
   container.querySelectorAll("audio.player").forEach((a) => { if (!a.paused) playing.set(a.dataset.id, a); });
   $("empty").classList.toggle("hidden", list.length > 0);
   $("lib-count").textContent = list.length ? `${list.length} kayıt` : "";
+  $("jobs-count").textContent = view.type === "folder" && currentFolder() ? (list.length || "") : "";
 
   const existing = new Map([...container.children].map((node) => [node.dataset.id, node]));
   const fragment = document.createDocumentFragment();
@@ -482,16 +612,12 @@ function fillJob(node, job, isPlaying) {
   if (job.mp3_url) {
     player.classList.remove("hidden");
     player.dataset.id = job.id;
-    if (!isPlaying && player.dataset.src !== job.id) { player.src = job.mp3_url; player.dataset.src = job.id; }
+    if (!isPlaying && player.dataset.mode !== "stems" && player.dataset.src !== job.id) { player.src = job.mp3_url; player.dataset.src = job.id; }
   } else {
     player.classList.add("hidden");
   }
-  for (const [cls, key] of [["dl-mp3", "mp3_download"], ["dl-flac", "flac_download"], ["dl-abc", "abc_download"]]) {
-    const link = node.querySelector("." + cls);
-    link.classList.toggle("hidden", !job[key]);
-    if (job[key]) link.href = job[key];
-  }
-  fillStems(node, job);
+  fillDownloads(node, job);
+  fillStems(node, job, isPlaying);
 
   const error = node.querySelector(".job-error");
   error.classList.toggle("hidden", !job.error);
@@ -519,6 +645,41 @@ function fillJob(node, job, isPlaying) {
     } catch (error) { report(error); }
   };
 
+  node.querySelector(".rename").onclick = async () => {
+    const title = prompt("Şarkı adı", job.title);
+    if (!title || !title.trim() || title.trim() === job.title) return;
+    try {
+      const updated = await api(`/jobs/${job.id}`, { method: "PATCH", body: JSON.stringify({ title: title.trim() }) });
+      jobs = jobs.map((j) => (j.id === job.id ? updated : j));
+      render();
+    } catch (error) { report(error); }
+  };
+
+  const noteLine = node.querySelector(".job-note");
+  const editor = node.querySelector(".note-editor");
+  const area = editor.querySelector("textarea");
+  noteLine.textContent = job.note || "";
+  noteLine.classList.toggle("hidden", !job.note || !editor.classList.contains("hidden"));
+  node.querySelector(".note-btn").textContent = job.note ? "📝 Notu düzenle" : "📝 Not ekle";
+  node.querySelector(".note-btn").onclick = () => {
+    area.value = job.note || "";
+    editor.classList.remove("hidden");
+    noteLine.classList.add("hidden");
+    area.focus();
+  };
+  node.querySelector(".note-cancel").onclick = () => {
+    editor.classList.add("hidden");
+    noteLine.classList.toggle("hidden", !job.note);
+  };
+  node.querySelector(".note-save").onclick = async () => {
+    try {
+      const updated = await api(`/jobs/${job.id}`, { method: "PATCH", body: JSON.stringify({ note: area.value.trim() }) });
+      jobs = jobs.map((j) => (j.id === job.id ? updated : j));
+      editor.classList.add("hidden");
+      render();
+    } catch (error) { report(error); }
+  };
+
   node.querySelector(".reuse").onclick = () => reuse(job);
   node.querySelector(".cancel").onclick = async () => { await api(`/jobs/${job.id}/cancel`, { method: "POST" }); refresh(); };
   node.querySelector(".delete").onclick = async () => {
@@ -529,15 +690,105 @@ function fillJob(node, job, isPlaying) {
   };
 }
 
-const STEMS_TEXT = { queued: "Sırada", running: "Vokal ayrılıyor", succeeded: "", failed: "" };
+function fillDownloads(node, job) {
+  const select = node.querySelector(".download");
+  const items = [
+    ["Şarkı · MP3", job.mp3_download], ["Şarkı · FLAC", job.flac_download],
+    ["Altyapı · MP3", job.instrumental_mp3_download], ["Altyapı · FLAC", job.instrumental_download],
+    ["Vokal · FLAC", job.vocals_download], ["Nota (ABC)", job.abc_download],
+  ].filter(([, url]) => url);
+  select.classList.toggle("hidden", !items.length);
+  if (document.activeElement !== select) {
+    select.replaceChildren(new Option("⬇ İndir", ""), ...items.map(([label, url]) => new Option(label, url)));
+  }
+  select.onchange = () => {
+    if (!select.value) return;
+    const link = document.createElement("a");
+    link.href = select.value;
+    link.rel = "noopener";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    select.value = "";
+  };
+}
 
-function fillStems(node, job) {
+// Instrumental and vocals play together in sync; each toggle mutes its own stem.
+function mixerFor(node) {
+  if (node._mix) return node._mix;
+  const player = node.querySelector(".player");
+  const mix = { inst: true, voc: true, muted: false, active: false, vocals: new Audio() };
+  mix.vocals.preload = "auto";
+  const expectedMuted = () => (mix.active ? mix.muted || !mix.inst : mix.muted);
+  mix.apply = () => {
+    player.muted = expectedMuted();
+    mix.vocals.muted = mix.muted || !mix.voc;
+    mix.paint();
+  };
+  mix.paint = () => {
+    for (const [cls, on] of [[".toggle.inst", mix.inst], [".toggle.voc", mix.voc]]) {
+      const button = node.querySelector(cls);
+      button.classList.toggle("on", on);
+      button.setAttribute("aria-pressed", String(on));
+    }
+  };
+  const follow = () => {
+    if (mix.active && Math.abs(mix.vocals.currentTime - player.currentTime) > 0.05) mix.vocals.currentTime = player.currentTime;
+  };
+  player.addEventListener("play", () => { if (mix.active) { follow(); mix.vocals.play().catch(() => {}); } });
+  player.addEventListener("playing", () => { if (mix.active) mix.vocals.play().catch(() => {}); });
+  player.addEventListener("pause", () => mix.vocals.pause());
+  player.addEventListener("waiting", () => { if (mix.active) mix.vocals.pause(); });
+  player.addEventListener("ended", () => mix.vocals.pause());
+  player.addEventListener("seeking", follow);
+  player.addEventListener("seeked", follow);
+  player.addEventListener("ratechange", () => { mix.vocals.playbackRate = player.playbackRate; });
+  player.addEventListener("timeupdate", () => {
+    if (mix.active && !player.paused && Math.abs(mix.vocals.currentTime - player.currentTime) > 0.25) mix.vocals.currentTime = player.currentTime;
+  });
+  player.addEventListener("volumechange", () => {
+    mix.vocals.volume = player.volume;
+    if (player.muted !== expectedMuted()) {
+      // The native mute button was used: mute everything, or unmute and bring the instrumental back.
+      mix.muted = player.muted;
+      if (!player.muted && !mix.inst) mix.inst = true;
+      mix.apply();
+    }
+  });
+  node.querySelector(".toggle.inst").onclick = () => { mix.inst = !mix.inst; mix.apply(); };
+  node.querySelector(".toggle.voc").onclick = () => { mix.voc = !mix.voc; mix.apply(); };
+  node._mix = mix;
+  return mix;
+}
+
+function fillStems(node, job, isPlaying) {
   const state = job.stems_status;
-  const box = node.querySelector(".stems");
+  const mix = mixerFor(node);
+  const player = node.querySelector(".player");
+  const ready = state === "succeeded" && job.instrumental_url && job.vocals_url;
+  const working = state === "queued" || state === "running";
+
+  node.querySelector(".mixer").classList.toggle("hidden", !ready);
+  if (ready && !isPlaying && player.dataset.mode !== "stems") {
+    player.src = job.instrumental_url;
+    mix.vocals.src = job.vocals_url;
+    player.dataset.mode = "stems";
+    mix.active = true;
+    mix.apply();
+  }
+  mix.paint();
+
+  node.querySelector(".stems-state").classList.toggle("hidden", !working);
+  node.querySelector(".stems-progress").classList.toggle("hidden", !working);
+  let status = working ? "Altyapı ve vokal ayrılıyor" : "";
+  if (state === "queued" && gpu && gpu.gpu.state !== "running") status = "Altyapı ve vokal için sırada · GPU açılıyor";
+  node.querySelector(".stems-status").textContent = status;
+
+  // New covers are split automatically; the button is only a retry (or for covers made before that).
   const button = node.querySelector(".stems-btn");
   const canRequest = job.status === "succeeded" && (!state || state === "failed");
   button.classList.toggle("hidden", !canRequest);
-  button.textContent = state === "failed" ? "🎙 Vokali tekrar ayır" : "🎙 Vokali ayır";
+  button.textContent = state === "failed" ? "🎙 Tekrar dene" : "🎙 Altyapı ve vokal ayır";
   button.onclick = async () => {
     button.disabled = true;
     try {
@@ -548,41 +799,19 @@ function fillStems(node, job) {
     } catch (error) { report(error); }
     button.disabled = false;
   };
-
-  box.classList.toggle("hidden", !state);
-  if (!state) return;
-  const working = state === "queued" || state === "running";
-  node.querySelector(".stems-progress").classList.toggle("hidden", !working);
-  let status = working ? (job.stems_message || STEMS_TEXT[state]) : "";
-  if (state === "queued" && gpu && gpu.gpu.state !== "running") status = "Sırada · GPU açılıyor";
-  node.querySelector(".stems-status").textContent = status;
-  const player = node.querySelector(".stems-player");
-  player.classList.toggle("hidden", !job.instrumental_url);
-  if (job.instrumental_url && player.dataset.src !== job.id && player.paused) {
-    player.src = job.instrumental_url;
-    player.dataset.src = job.id;
-  }
-  node.querySelector(".stems-links").classList.toggle("hidden", state !== "succeeded");
-  for (const [cls, key] of [["dl-inst-flac", "instrumental_download"], ["dl-inst-mp3", "instrumental_mp3_download"], ["dl-vocals", "vocals_download"]]) {
-    const link = node.querySelector("." + cls);
-    if (job[key]) link.href = job[key];
-  }
   const error = node.querySelector(".stems-error");
   error.classList.toggle("hidden", state !== "failed");
   error.textContent = state === "failed" ? `Vokal ayırma başarısız: ${job.stems_error || "bilinmeyen hata"}` : "";
 }
 
 function reuse(job) {
-  if (job.folder_id && folders.some((f) => f.id === job.folder_id) && view.id !== job.folder_id) {
-    setView({ type: "folder", id: job.folder_id });
+  if (job.folder_id && folders.some((f) => f.id === job.folder_id)) {
+    setView({ type: "folder", id: job.folder_id, tab: "sources" });
   }
   if (!currentFolder()) {
     $("create-error").textContent = "Tekrar kullanmak için şarkıyı önce bir klasöre taşı";
     return;
   }
-  $("title").value = job.title;
-  $("style").value = job.style;
-  $("lyrics").value = job.lyrics;
   const saved = job.source_id && sources.find((s) => s.id === job.source_id);
   if (saved) {
     selectSource(saved);
@@ -591,6 +820,10 @@ function reuse(job) {
     source = { key: job.upload_key, name: job.source_name || "kaynak", url: job.source_url };
     showSource(source.name, source.url, true);
   }
+  // The job's own style and lyrics win over what the source remembers.
+  $("title").value = job.title;
+  $("style").value = job.style;
+  $("lyrics").value = job.lyrics;
   updateCreate();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }

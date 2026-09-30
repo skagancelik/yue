@@ -230,9 +230,11 @@ def public_job(job):
         "created_at", "started_at", "finished_at", "duration", "source_name", "tokens", "variant",
         "upload_key", "folder_id", "source_id", "stems_status", "stems_message", "stems_error")}
     out["liked"] = bool(job.get("liked"))
+    out["note"] = job.get("note") or ""
     if job.get("stems_status") == "succeeded":
         name = job.get("title")
         out["instrumental_url"] = presign_get(job["instrumental_mp3_key"])
+        out["vocals_url"] = presign_get(job["vocals_key"])
         out["instrumental_download"] = presign_get(job["instrumental_key"], safe_filename(f"{name} (altyapı)", "flac"))
         out["instrumental_mp3_download"] = presign_get(job["instrumental_mp3_key"], safe_filename(f"{name} (altyapı)", "mp3"))
         out["vocals_download"] = presign_get(job["vocals_key"], safe_filename(f"{name} (vokal)", "flac"))
@@ -389,6 +391,8 @@ def update_job_fields(job_id, body):
         fields["folder_id"] = folder_id
     if "title" in body:
         fields["title"] = validate_text(body, "title", 120)
+    if "note" in body:
+        fields["note"] = validate_text(body, "note", 2000, required=False)   # None removes it
     if not fields:
         raise HttpError(400, "Değişiklik yok")
     # update_item, not put_item: the GPU agent writes progress to the same item concurrently.
@@ -441,8 +445,36 @@ def delete_folder(folder_id):
 
 def public_source(source):
     out = {k: source.get(k) for k in ("id", "folder_id", "name", "created_at", "size")}
+    out["style"] = source.get("style") or ""
+    out["lyrics"] = source.get("lyrics") or ""
+    out["note"] = source.get("note") or ""
     out["url"] = presign_get(source["key"])
     return out
+
+
+def update_source(source_id, body):
+    """Save the style and lyrics that belong to a source song, so a new cover can start from them."""
+    get_item(source_id, SOURCES, "Kaynak şarkı bulunamadı")
+    fields = {}
+    if "style" in body:
+        fields["style"] = (validate_text(body, "style", 2000, required=False) or "")
+    if "lyrics" in body:
+        fields["lyrics"] = (validate_text(body, "lyrics", 16000, required=False) or "")
+    if "name" in body:
+        fields["name"] = validate_text(body, "name", 200)
+    if "note" in body:
+        fields["note"] = validate_text(body, "note", 2000, required=False)   # None removes it
+    if not fields:
+        raise HttpError(400, "Değişiklik yok")
+    sets = {k: v for k, v in fields.items() if v is not None}
+    removes = [k for k, v in fields.items() if v is None]
+    expression = ("SET " + ", ".join(f"#{k} = :{k}" for k in sets)) if sets else ""
+    if removes:
+        expression += " REMOVE " + ", ".join(f"#{k}" for k in removes)
+    kwargs = {"ExpressionAttributeValues": {f":{k}": v for k, v in sets.items()}} if sets else {}
+    table.update_item(Key={"id": source_id}, UpdateExpression=expression.strip(),
+                      ExpressionAttributeNames={f"#{k}": k for k in fields}, **kwargs)
+    return public_source(get_item(source_id, SOURCES, "Kaynak şarkı bulunamadı"))
 
 
 def create_source(folder_id, body):
@@ -523,6 +555,7 @@ ROUTES = [
     ("PATCH", r"/api/folders/([0-9a-f]{32})", lambda e, m: rename_folder(m.group(1), parse_body(e))),
     ("DELETE", r"/api/folders/([0-9a-f]{32})", lambda e, m: delete_folder(m.group(1))),
     ("POST", r"/api/folders/([0-9a-f]{32})/sources", lambda e, m: create_source(m.group(1), parse_body(e))),
+    ("PATCH", r"/api/sources/([0-9a-f]{32})", lambda e, m: update_source(m.group(1), parse_body(e))),
     ("DELETE", r"/api/sources/([0-9a-f]{32})", lambda e, m: delete_source(m.group(1))),
     ("GET", r"/api/styles", lambda e, m: {"styles": [public_style(i) for i in all_items(STYLES)]}),
     ("POST", r"/api/styles", lambda e, m: create_style(parse_body(e))),

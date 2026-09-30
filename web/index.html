@@ -26,15 +26,18 @@
   <div id="app" class="app hidden">
     <header class="topbar">
       <div class="brand"><img src="serkanify-logo.svg" alt="serkanify" width="119" height="32"><span class="brand-studio">Studio</span></div>
+      <nav class="topnav" aria-label="Bölümler">
+        <button type="button" class="topnav-item" data-top="folders">📁 Klasörler</button>
+        <button type="button" class="topnav-item" data-top="liked"><span class="heart">♥</span> Beğendiklerim<span id="liked-count" class="nav-count"></span></button>
+      </nav>
       <div class="gpu">
         <span id="gpu-pill" class="pill"><span class="dot"></span><span id="gpu-text">…</span></span>
         <button id="gpu-stop" class="btn ghost small hidden" title="GPU'yu şimdi kapat">GPU'yu kapat</button>
       </div>
     </header>
 
-    <div class="shell">
+    <div class="shell" id="shell">
     <aside class="sidebar">
-      <button type="button" class="nav-item" data-view="liked"><span class="nav-icon heart">♥</span><span class="nav-name">Beğendiklerim</span><span id="liked-count" class="nav-count"></span></button>
       <div class="side-head">
         <span>Klasörler</span>
         <button type="button" id="folder-new" class="link small" title="Yeni klasör">+ Yeni</button>
@@ -85,6 +88,7 @@
         </div>
         <textarea id="lyrics" rows="12" maxlength="16000" placeholder="[Verse]&#10;İlk dize&#10;İkinci dize&#10;&#10;[Chorus]&#10;Nakarat…"></textarea>
         <div class="hint muted small">İpucu: Bölüm sırası ve hece sayısı orijinal melodiye ne kadar yakınsa sonuç o kadar iyi olur.</div>
+        <button type="button" id="source-text-save" class="btn ghost small hidden">Stil ve sözü kaynak şarkıya kaydet</button>
 
         <details class="advanced">
           <summary>Gelişmiş</summary>
@@ -110,14 +114,24 @@
           </div>
         </div>
 
-        <div id="sources-block" class="block hidden">
-          <div class="block-head"><h3>Kaynak şarkılar</h3><span id="sources-count" class="muted small"></span></div>
-          <div id="sources" class="sources"></div>
-          <p id="sources-empty" class="muted small hidden">Bu klasöre henüz kaynak şarkı yüklenmedi. Soldaki alana bir kayıt bırak.</p>
+        <div id="subtabs" class="subtabs hidden" role="tablist">
+          <button type="button" class="subtab" role="tab" data-tab="sources">Kaynak şarkılar <span id="sources-count" class="tab-count"></span></button>
+          <button type="button" class="subtab" role="tab" data-tab="jobs">Üretimler <span id="jobs-count" class="tab-count"></span></button>
         </div>
 
-        <div class="block">
-          <div class="block-head"><h3 id="jobs-title">Üretimler</h3><span id="lib-count" class="muted small"></span></div>
+        <div id="sources-block" class="block hidden">
+          <div class="block-head">
+            <button type="button" id="source-upload" class="btn ghost small">⬆ Kaynak şarkı yükle</button>
+            <input id="source-file" type="file" multiple hidden accept="audio/*,.mp3,.wav,.flac,.m4a,.ogg,.opus,.aac,.webm,.aiff">
+            <span class="muted small">Birden fazla dosya seçebilirsin · en fazla 40 MB</span>
+          </div>
+          <div id="upload-list" class="upload-list"></div>
+          <div id="sources" class="sources"></div>
+          <p id="sources-empty" class="muted small hidden">Bu klasöre henüz kaynak şarkı yüklenmedi. Yukarıdaki düğmeyle veya soldaki alana bir kayıt bırak.</p>
+        </div>
+
+        <div id="jobs-block" class="block">
+          <div id="jobs-head" class="block-head"><h3 id="jobs-title">Beğenilen şarkılar</h3><span id="lib-count" class="muted small"></span></div>
           <div id="jobs" class="jobs"></div>
           <div id="empty" class="empty hidden">
             <div class="drop-icon">🎧</div>
@@ -142,13 +156,24 @@
   <template id="source-tpl">
     <div class="source">
       <div class="source-top">
-        <span class="source-name"></span>
+        <div class="job-title-row"><span class="source-name"></span><button type="button" class="icon-btn rename" title="Adı düzenle">✎</button></div>
         <span class="source-meta muted small"></span>
       </div>
       <audio controls preload="none"></audio>
+      <div class="note source-note hidden"></div>
       <div class="source-actions">
         <button type="button" class="btn ghost small use">Bununla üret</button>
+        <button type="button" class="btn ghost small edit-text">Stil, söz, not</button>
         <button type="button" class="btn ghost small danger remove">Sil</button>
+      </div>
+      <div class="src-editor">
+        <textarea class="src-style" rows="2" maxlength="2000" placeholder="Stil: Acoustic Guitar, Strings, …"></textarea>
+        <textarea class="src-lyrics" rows="7" maxlength="16000" placeholder="[Verse]&#10;Şarkı sözleri…"></textarea>
+        <textarea class="src-note" rows="2" maxlength="2000" placeholder="Not (şarkının altında görünür)"></textarea>
+        <div class="src-editor-actions">
+          <button type="button" class="btn primary small src-save">Kaydet</button>
+          <span class="src-note muted small"></span>
+        </div>
       </div>
     </div>
   </template>
@@ -159,7 +184,7 @@
       <div class="job-body">
         <div class="job-top">
           <div>
-            <div class="job-title"></div>
+            <div class="job-title-row"><div class="job-title"></div><button type="button" class="icon-btn rename" title="Adı düzenle">✎</button></div>
             <div class="job-style muted small"></div>
           </div>
           <div class="job-flags">
@@ -173,22 +198,29 @@
           <div class="progress indeterminate"><div></div></div>
         </div>
         <audio class="player hidden" controls preload="none"></audio>
-        <div class="job-error error small hidden"></div>
-        <div class="stems hidden">
-          <div class="stems-head"><span class="stems-title">Altyapı (vokalsiz)</span><span class="stems-status muted small"></span></div>
-          <div class="progress indeterminate stems-progress hidden"><div></div></div>
-          <audio class="stems-player hidden" controls preload="none"></audio>
-          <div class="stems-links hidden">
-            <a class="btn ghost small dl-inst-flac" target="_blank" rel="noopener">Altyapı FLAC</a>
-            <a class="btn ghost small dl-inst-mp3" target="_blank" rel="noopener">Altyapı MP3</a>
-            <a class="btn ghost small dl-vocals" target="_blank" rel="noopener">Vokal FLAC</a>
+        <div class="note job-note hidden"></div>
+        <div class="note-editor hidden">
+          <textarea rows="3" maxlength="2000" placeholder="Bu şarkı için not…"></textarea>
+          <div class="note-editor-actions">
+            <button type="button" class="btn primary small note-save">Kaydet</button>
+            <button type="button" class="btn ghost small note-cancel">Vazgeç</button>
           </div>
-          <div class="stems-error error small hidden"></div>
         </div>
+        <div class="job-error error small hidden"></div>
+        <div class="mixer hidden">
+          <div class="mixer-toggles">
+            <button type="button" class="toggle inst on" aria-pressed="true" title="Altyapıyı aç/kapat">🎸 Altyapı</button>
+            <button type="button" class="toggle voc on" aria-pressed="true" title="Vokali aç/kapat">🎤 Vokal</button>
+          </div>
+        </div>
+        <div class="stems-state hidden">
+          <div class="stems-status muted small"></div>
+          <div class="progress indeterminate stems-progress hidden"><div></div></div>
+        </div>
+        <div class="stems-error error small hidden"></div>
         <div class="job-actions">
-          <a class="btn ghost small dl-mp3 hidden" target="_blank" rel="noopener">MP3</a>
-          <a class="btn ghost small dl-flac hidden" target="_blank" rel="noopener">FLAC</a>
-          <a class="btn ghost small dl-abc hidden" target="_blank" rel="noopener">Nota</a>
+          <select class="download small-select hidden" title="İndir" aria-label="İndir"></select>
+          <button class="btn ghost small note-btn">📝 Not</button>
           <button class="btn ghost small reuse">Tekrar kullan</button>
           <select class="move small-select" title="Başka klasöre taşı"></select>
           <button class="btn ghost small stems-btn hidden" title="Vokali ayırıp vokalsiz altyapı çıkar">🎙 Vokali ayır</button>
