@@ -319,6 +319,9 @@ def create_jobs(body):
     auto_stems = body.get("stems", True)
     if not isinstance(auto_stems, bool):
         raise HttpError(400, "stems true/false olmalı")
+    stop_after = body.get("stop_gpu", False)
+    if not isinstance(stop_after, bool):
+        raise HttpError(400, "stop_gpu true/false olmalı")
     variants = body.get("variants", 1)
     if variants not in (1, 2):
         raise HttpError(400, "variants 1 veya 2 olmalı")
@@ -345,6 +348,8 @@ def create_jobs(body):
             job["source_id"] = source_id
         if not auto_stems:
             job["auto_stems"] = False
+        if stop_after:
+            job["stop_after"] = True
         table.put_item(Item=job)
         jobs.append(job)
     gpu_state = ensure_gpu(quick=True)

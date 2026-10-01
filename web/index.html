@@ -92,7 +92,7 @@
 
         <details class="advanced">
           <summary>Gelişmiş</summary>
-          <label class="check"><input id="auto-stems" type="checkbox" checked> Altyapı ve vokalı da ayır <span class="muted small">(şarkı başına ~1,5 dk ek GPU)</span></label>
+          <label class="check"><input id="auto-stems" type="checkbox" checked> Altyapı ve vokalı da ayır <span class="muted small">(şarkı başına ~3 dk ek GPU)</span></label>
           <div class="row">
             <label>Varyasyon
               <select id="variants"><option value="1">1 şarkı</option><option value="2">2 şarkı (farklı seed)</option></select>
@@ -100,6 +100,8 @@
             <label>Seed <input id="seed" type="number" min="0" max="2147483647" placeholder="rastgele"></label>
           </div>
         </details>
+
+        <label class="check"><input id="stop-gpu" type="checkbox" checked> Üretim sonunda GPU'yu durdur <span class="muted small">(vokal ayrımı ve sıradaki işler bitince hemen kapanır, boşta beklemez)</span></label>
 
         <button id="create" class="btn primary wide" disabled>🎤 Cover oluştur</button>
         <p id="create-note" class="muted small center"></p>

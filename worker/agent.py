@@ -43,6 +43,8 @@ state = {"state": "booting", "message": "Açılıyor"}
 active = {}               # job id -> thread
 last_activity = time.time()
 turbo_up = False          # YuE2 holds ~21 GB of the GPU; it is stopped while a separation runs
+stop_requested = False    # a finished cover asked for "stop the GPU when done" (waits for its stems and the queue)
+STOP_GRACE = 30           # seconds of quiet before that stop, so a just-queued stems task shows up in the queue index
 
 
 def log(*args):
@@ -209,6 +211,7 @@ STAGE_TEXT = {
 
 
 def process(job):
+    global stop_requested
     job_id = job["id"]
     touch()
     work = WORK / job_id
@@ -291,6 +294,8 @@ def process(job):
         update_job(job_id, status="failed", stage="failed", message="Hata", error=str(error)[:500],
                    finished_at=now())
     finally:
+        # The last cover to finish decides whether the box stops as soon as the queue is empty.
+        stop_requested = bool(job.get("stop_after"))
         subprocess.run(["rm", "-rf", str(work)])
         active.pop(job_id, None)
         touch()
@@ -422,6 +427,7 @@ def work_loop():
                     idle_minutes = int(value)
             except Exception:
                 traceback.print_exc()
+        queue = []
         if len(active) < MAX_PARALLEL:
             queue = table.query(IndexName="queue", KeyConditionExpression=Key("queue").eq("q"),
                                 Limit=25)["Items"]
@@ -453,12 +459,19 @@ def work_loop():
         with state_lock:
             state.update(state="busy" if busy else "ready", message=message)
         idle = time.time() - last_activity
+        if not busy and stop_requested and not queue and idle > STOP_GRACE:
+            power_off("Üretim bitti, GPU kapatılıyor")
         if not busy and idle > idle_minutes * 60:
-            set_state("stopping", f"{idle_minutes} dk boşta kaldı, GPU kapanıyor")
-            subprocess.run(["systemctl", "stop", "yue2-serve.service"])
-            subprocess.run(["systemctl", "poweroff"])
-            time.sleep(300)
+            power_off(f"{idle_minutes} dk boşta kaldı, GPU kapanıyor")
         time.sleep(3)
+
+
+def power_off(message):
+    set_state("stopping", message)
+    log(message)
+    subprocess.run(["systemctl", "stop", "yue2-serve.service"])
+    subprocess.run(["systemctl", "poweroff"])
+    time.sleep(300)
 
 
 def main():

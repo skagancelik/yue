@@ -465,6 +465,7 @@ $("create").addEventListener("click", async () => {
       folder_id: currentFolder().id, title: $("title").value.trim(),
       style: $("style").value.trim(), lyrics: $("lyrics").value.trim(),
       variants: Number($("variants").value), seed, stems: $("auto-stems").checked,
+      stop_gpu: $("stop-gpu").checked,
     };
     if (source.id) body.source_id = source.id;
     else { body.upload_key = source.key; body.source_name = source.name; }
