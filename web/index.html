@@ -266,6 +266,28 @@
         <button type="button" id="score-pick-reset" class="btn ghost small hidden" title="Sözler ilk vokal notadan başlasın">Sıfırla</button>
       </div>
       <p id="score-pick-hint" class="pick-hint small hidden">İlk hecenin söylendiği notaya tıkla. Ondan önceki notalar (sözsüz giriş, mırıldanma) boş kalır.</p>
+      <div id="score-editor" class="score-editor hidden">
+        <p class="muted small">Bölüm adlarını ve hangi notaların <b>söylendiğini</b> (Vocal) ya da <b>enstrümanla çalındığını</b> (Ins) düzelt. Kaydedince bu besteden yapılan yeni düzenlemeler bu notayla üretilir; melodi kayıttan yeniden çıkarılmaz.</p>
+        <div id="score-sections" class="score-sections"></div>
+        <div id="score-compare" class="score-compare small"></div>
+        <div class="score-edit-tools">
+          <span id="score-sel" class="muted small"></span>
+          <select id="score-label" class="small-select" aria-label="Bölüm adı">
+            <option value="intro">intro (giriş)</option>
+            <option value="verse">verse (kıta)</option>
+            <option value="pre-chorus">pre-chorus (nakarat öncesi)</option>
+            <option value="chorus">chorus (nakarat)</option>
+            <option value="post-chorus">post-chorus (nakarat sonrası)</option>
+            <option value="bridge">bridge (köprü)</option>
+            <option value="interlude">interlude (ara müzik)</option>
+            <option value="solo">solo</option>
+            <option value="outro">outro (bitiş)</option>
+          </select>
+          <button type="button" id="score-set-section" class="btn ghost small" disabled>Seçimi bu bölüm yap</button>
+          <button type="button" id="score-swap" class="btn ghost small" disabled title="Seçili ölçülerde söylenen notalar enstrümana, enstrümanınkiler vokale geçer">🎤⇄🎹 Vokal ⇄ Enstrüman</button>
+          <button type="button" id="score-undo" class="btn ghost small" disabled>↶ Geri al</button>
+        </div>
+      </div>
       <div id="score-paper" class="score-paper"></div>
     </div>
     <div class="modal-actions">
@@ -273,6 +295,10 @@
       <button type="button" id="score-print" class="btn ghost small" disabled>🖨 PDF / Yazdır</button>
       <button type="button" id="score-midi" class="btn ghost small" disabled>⬇ MIDI</button>
       <a id="score-abc" class="btn ghost small" rel="noopener">⬇ ABC</a>
+      <button type="button" id="score-edit" class="btn ghost small hidden" title="Bölümleri ve vokal/enstrüman ayrımını düzelt, besteye kaydet">✎ Notayı düzelt</button>
+      <button type="button" id="score-save" class="btn primary small hidden" disabled>💾 Besteye kaydet</button>
+      <button type="button" id="score-cancel" class="btn ghost small hidden">Vazgeç</button>
+      <button type="button" id="score-reset" class="btn ghost small hidden" title="Düzeltmeyi sil; yeni düzenlemeler melodiyi yine kayıttan çıkarır">Özgün notaya dön</button>
     </div>
   </dialog>
 
@@ -298,6 +324,7 @@
     </div>
   </div>
 
+  <script src="score-model.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

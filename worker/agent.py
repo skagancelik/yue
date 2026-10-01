@@ -217,19 +217,32 @@ def process(job):
     work = WORK / job_id
     work.mkdir(parents=True, exist_ok=True)
     try:
-        source = work / Path(job["upload_key"]).name
-        s3.download_file(BUCKET, job["upload_key"], str(source))
+        # A corrected score saved on the source goes to YuE2 directly (no SheetSage2 transcription);
+        # otherwise the recording is sent and the melody is extracted from it.
+        score = None
+        if job.get("score_key"):
+            score = s3.get_object(Bucket=BUCKET, Key=job["score_key"])["Body"].read().decode("utf-8")
+        else:
+            source = work / Path(job["upload_key"]).name
+            s3.download_file(BUCKET, job["upload_key"], str(source))
         update_job(job_id, stage="submitting", message="Modele gönderiliyor")
         # The inference worker restarts itself after a failed job; wait instead of failing.
         deadline = time.time() + 10 * 60
         while True:
             touch()
-            with source.open("rb") as handle:
+            headers = {**turbo_headers(), "Idempotency-Key": job_id}
+            if score is not None:
                 response = requests.post(
-                    f"{TURBO}/v1/covers", headers={**turbo_headers(), "Idempotency-Key": job_id},
-                    files={"audio": (source.name, handle)},
-                    data={"style": job["style"], "lyrics": job["lyrics"], "seed": str(int(job["seed"]))},
-                    timeout=120)
+                    f"{TURBO}/v1/jobs", headers=headers, timeout=120,
+                    json={"style": job["style"], "lyrics": job["lyrics"], "seed": int(job["seed"]),
+                          "cot": "melody", "abc": score})
+            else:
+                with source.open("rb") as handle:
+                    response = requests.post(
+                        f"{TURBO}/v1/covers", headers=headers,
+                        files={"audio": (source.name, handle)},
+                        data={"style": job["style"], "lyrics": job["lyrics"], "seed": str(int(job["seed"]))},
+                        timeout=120)
             if response.status_code != 503 or time.time() > deadline:
                 break
             update_job(job_id, message="Model hazırlanıyor, bekleniyor")
@@ -262,7 +275,10 @@ def process(job):
         if status["status"] == "failed":
             error = status.get("error") or {}
             message = error.get("message") or ""
-            if not message or message.startswith("Inference failed"):
+            if score is not None:
+                message = (f"Model düzeltilmiş notadan düzenleme üretemedi: {message or 'bilinmeyen hata'}. "
+                           "Notayı kontrol edin veya bestenin notasını özgün haline döndürün.")
+            elif not message or message.startswith("Inference failed"):
                 message = ("Model bu besteden düzenleme üretemedi (çoğunlukla melodi çıkarılamadığında olur). "
                            "Başka bir kayıt veya farklı bir kesit deneyin.")
             raise RuntimeError(message)

@@ -234,6 +234,7 @@ def public_job(job):
         "id", "group", "title", "style", "lyrics", "seed", "status", "stage", "message", "error",
         "created_at", "started_at", "finished_at", "duration", "source_name", "tokens", "variant",
         "upload_key", "folder_id", "source_id", "stems_status", "stems_message", "stems_error", "lyrics_start")}
+    out["edited_score"] = bool(job.get("score_key"))   # made from the source's corrected score
     out["liked"] = bool(job.get("liked"))
     out["note"] = job.get("note") or ""
     if job.get("stems_status") == "succeeded":
@@ -313,9 +314,11 @@ def create_jobs(body):
     folder_id = validate_text(body, "folder_id", 32)
     source_id = validate_text(body, "source_id", 32, required=False)
     get_folder(folder_id)
+    score_key = None
     if source_id:
         source = get_item(source_id, SOURCES, "Beste bulunamadı")
         upload_key, body["source_name"] = source["key"], source["name"]
+        score_key = source.get("score_key")   # a corrected score skips melody extraction
     else:
         upload_key = validate_text(body, "upload_key", 200)
     if not re.fullmatch(r"(uploads|sources)/[0-9a-f]{32}\.[a-z0-9]+", upload_key):
@@ -354,6 +357,11 @@ def create_jobs(body):
         job["folder_id"] = folder_id
         if source_id:
             job["source_id"] = source_id
+        if score_key:
+            # A copy, so saving or resetting the source's score later does not change a queued job.
+            job["score_key"] = f"outputs/{job['id']}/input.abc"
+            s3.copy_object(Bucket=BUCKET, Key=job["score_key"], CopySource={"Bucket": BUCKET, "Key": score_key},
+                           ContentType="text/plain; charset=utf-8", MetadataDirective="REPLACE")
         if not auto_stems:
             job["auto_stems"] = False
         if stop_after:
@@ -383,7 +391,7 @@ def delete_job(job_id):
         raise HttpError(409, "Önce işi iptal edin")
     if job.get("stems_status") in ("queued", "running"):
         raise HttpError(409, "Vokal ayırma sürüyor, bitmesini bekleyin")
-    for key in ("mp3_key", "flac_key", "abc_key") + STEM_KEYS:
+    for key in ("mp3_key", "flac_key", "abc_key", "score_key") + STEM_KEYS:
         if job.get(key):
             s3.delete_object(Bucket=BUCKET, Key=job[key])
     table.delete_item(Key={"id": job_id})
@@ -479,7 +487,8 @@ def delete_folder(folder_id):
         raise HttpError(409, "Bu şarkının bir bestesini kullanan düzenleme sürüyor; bitmesini bekleyin")
     for source in all_items(SOURCES):
         if source.get("folder_id") == folder_id:
-            s3.delete_object(Bucket=BUCKET, Key=source["key"])
+            for key in source_keys(source):
+                s3.delete_object(Bucket=BUCKET, Key=key)
             table.delete_item(Key={"id": source["id"]})
     table.delete_item(Key={"id": folder_id})
     return {"deleted": folder_id}
@@ -492,7 +501,55 @@ def public_source(source):
     out["note"] = source.get("note") or ""
     out["copyright"] = bool(source.get("copyright"))
     out["url"] = presign_get(source["key"])
+    out["score_edited"] = bool(source.get("score_key"))
+    out["score_updated_at"] = source.get("score_updated_at")
+    if source.get("score_key"):
+        out["score_url"] = presign_get(source["score_key"])
     return out
+
+
+def source_keys(source):
+    return [source[k] for k in ("key", "score_key") if source.get(k)]
+
+
+def check_score(abc):
+    """The corrected score goes to YuE2 as-is: keep it in the native SheetSage2 dialect."""
+    if not isinstance(abc, str) or not abc.strip():
+        raise HttpError(400, "Nota boş olamaz")
+    if len(abc) > 60000:
+        raise HttpError(400, "Nota en fazla 60.000 karakter olabilir")
+    lines = abc.splitlines()
+    if not lines or lines[0].strip() != "X:1" or not any(l.startswith("K:") for l in lines):
+        raise HttpError(400, "Geçersiz nota: X:1 ve K: başlıkları gerekli")
+    voices = {l.split()[1] for l in lines if l.startswith("V:") and len(l.split()) > 1}
+    if voices != {"Vocal", "Ins"}:
+        raise HttpError(400, "Geçersiz nota: yalnızca Vocal ve Ins sesleri olmalı")
+    if any(l.startswith("w:") or l.startswith("W:") for l in lines):
+        raise HttpError(400, "Nota söz satırı (w:) içermemeli; sözler ayrı gönderilir")
+
+
+def save_source_score(source_id, body):
+    """Keep a corrected melody for a source; covers made from it send this score to YuE2."""
+    get_item(source_id, SOURCES, "Beste bulunamadı")
+    abc = body.get("abc")
+    check_score(abc)
+    fields = {"score_key": f"sources/{source_id}.score.abc", "score_updated_at": now()}
+    s3.put_object(Bucket=BUCKET, Key=fields["score_key"], Body=abc.encode("utf-8"),
+                  ContentType="text/plain; charset=utf-8")
+    table.update_item(Key={"id": source_id},
+                      UpdateExpression="SET " + ", ".join(f"#{k} = :{k}" for k in fields),
+                      ExpressionAttributeNames={f"#{k}": k for k in fields},
+                      ExpressionAttributeValues={f":{k}": v for k, v in fields.items()})
+    return public_source(get_item(source_id, SOURCES, "Beste bulunamadı"))
+
+
+def reset_source_score(source_id):
+    """Back to the transcription: new covers extract the melody from the recording again."""
+    source = get_item(source_id, SOURCES, "Beste bulunamadı")
+    if source.get("score_key"):
+        s3.delete_object(Bucket=BUCKET, Key=source["score_key"])
+    table.update_item(Key={"id": source_id}, UpdateExpression="REMOVE score_key, score_updated_at")
+    return public_source(get_item(source_id, SOURCES, "Beste bulunamadı"))
 
 
 def update_source(source_id, body):
@@ -545,7 +602,8 @@ def delete_source(source_id):
     source = get_item(source_id, SOURCES, "Beste bulunamadı")
     if any(job.get("source_id") == source_id and job.get("status") in ("queued", "running") for job in all_items(OWNER)):
         raise HttpError(409, "Bu besteyi kullanan bir düzenleme sürüyor; bitmesini bekleyin veya iptal edin")
-    s3.delete_object(Bucket=BUCKET, Key=source["key"])
+    for key in source_keys(source):
+        s3.delete_object(Bucket=BUCKET, Key=key)
     table.delete_item(Key={"id": source_id})
     return {"deleted": source_id}
 
@@ -603,6 +661,8 @@ ROUTES = [
     ("POST", r"/api/folders/([0-9a-f]{32})/sources", lambda e, m: create_source(m.group(1), parse_body(e))),
     ("PATCH", r"/api/sources/([0-9a-f]{32})", lambda e, m: update_source(m.group(1), parse_body(e))),
     ("DELETE", r"/api/sources/([0-9a-f]{32})", lambda e, m: delete_source(m.group(1))),
+    ("PUT", r"/api/sources/([0-9a-f]{32})/score", lambda e, m: save_source_score(m.group(1), parse_body(e))),
+    ("DELETE", r"/api/sources/([0-9a-f]{32})/score", lambda e, m: reset_source_score(m.group(1))),
     ("GET", r"/api/styles", lambda e, m: {"styles": [public_style(i) for i in all_items(STYLES)]}),
     ("POST", r"/api/styles", lambda e, m: create_style(parse_body(e))),
     ("DELETE", r"/api/styles/([0-9a-f]{32})", lambda e, m: delete_style(m.group(1))),

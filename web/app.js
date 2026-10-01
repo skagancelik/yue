@@ -343,7 +343,8 @@ function renderSources() {
     showCredit(node.querySelector(".source-credit"), item.copyright);
     const used = jobs.filter((j) => j.source_id === item.id).length;
     const saved = item.style || item.lyrics;
-    node.querySelector(".source-meta").textContent = [used ? `${used} düzenleme` : "", saved ? "✓ stil ve söz kayıtlı" : "", fmtAgo(item.created_at)].filter(Boolean).join(" · ");
+    node.querySelector(".source-meta").textContent = [used ? `${used} düzenleme` : "", saved ? "✓ stil ve söz kayıtlı" : "",
+      item.score_edited ? "🎼 düzeltilmiş nota" : "", fmtAgo(item.created_at)].filter(Boolean).join(" · ");
     node.querySelector(".use").textContent = source && source.id === item.id ? "Seçili" : "Bununla düzenle";
     node.querySelector(".use").onclick = () => { selectSource(item); window.scrollTo({ top: 0, behavior: "smooth" }); };
     // Do not overwrite what is being typed while the library refreshes.
@@ -468,6 +469,8 @@ function updateCreate() {
   $("create-note").textContent = warm
     ? `GPU açık · düzenleme başına ~1–3 dk`
     : `GPU kapalı · açılış ~3 dk + düzenleme ~1–3 dk${variants === 2 ? " (2 varyasyon birlikte)" : ""}`;
+  const item = source && source.id && sources.find((s) => s.id === source.id);
+  if (item && item.score_edited) $("create-note").textContent += " · 🎼 bestenin düzeltilmiş notası kullanılacak";
 }
 $("variants").addEventListener("change", updateCreate);
 
@@ -770,7 +773,7 @@ function fillJob(node, job) {
   const error = node.querySelector(".job-error");
   error.classList.toggle("hidden", !job.error);
   error.textContent = job.error || "";
-  node.querySelector(".meta").textContent = fmtAgo(job.created_at);
+  node.querySelector(".meta").textContent = fmtAgo(job.created_at) + (job.edited_score ? " · 🎼 düzeltilmiş nota" : "");
   node.querySelector(".rename").onclick = async () => {
     const title = prompt("Şarkı adı", job.title);
     if (!title || !title.trim() || title.trim() === job.title) return;
@@ -1026,7 +1029,9 @@ function drawScore() {
     staffwidth: 900, wrap: { minSpacing: 1.8, maxSpacing: 2.7, preferredMeasuresPerLine: 2 },
   })[0];
   const { placed, total } = score.words;
-  let status = "Besteden çıkarılan melodi (YuE2'ye verilen nota). Akor içermez.";
+  let status = score.job.edited_score
+    ? "Bestenin düzeltilmiş notası (YuE2'ye verilen nota). Akor içermez."
+    : "Besteden çıkarılan melodi (YuE2'ye verilen nota). Akor içermez.";
   if (!total) status += " Bu düzenlemede söz yok.";
   else if (withLyrics) status += ` Sözler tahmini yerleştirildi: ${placed}/${total} hece bir notaya denk geldi.`;
   $("score-status").textContent = status;
@@ -1068,10 +1073,236 @@ function pickStart(element) {
 
 function setScoreButtons(ready) {
   for (const id of ["score-play", "score-print", "score-midi"]) $(id).disabled = !ready;
+  const item = scoreSource();
+  $("score-edit").classList.toggle("hidden", !ready || !item);
+  $("score-edit").textContent = item && item.score_edited ? "✎ Bestenin notasını düzelt" : "✎ Notayı düzelt";
 }
+
+// ---- score editor: sections and which notes are sung (Vocal) or played (Ins)
+// The corrected score is saved on the source song; covers made from it send it to YuE2 instead
+// of transcribing the recording again (see ScoreModel in score-model.js).
+
+const scoreSource = () => score.job && score.job.source_id && sources.find((s) => s.id === score.job.source_id);
+
+function setEditing(on) {
+  $("score-editor").classList.toggle("hidden", !on);
+  $("score-paper").classList.toggle("editing", on);
+  for (const id of ["score-save", "score-cancel"]) $(id).classList.toggle("hidden", !on);
+  $("score-reset").classList.toggle("hidden", !on || !(scoreSource() || {}).score_edited);
+  for (const id of ["score-edit", "score-print", "score-midi", "score-abc"]) $(id).classList.toggle("hidden", on);
+  $("score-lyrics").closest(".score-tools").classList.toggle("hidden", on);
+  if (!on) { score.edit = null; $("score-pick-hint").classList.add("hidden"); }
+}
+
+$("score-edit").addEventListener("click", async () => {
+  const item = scoreSource();
+  if (!item) return;
+  stopScore();
+  setPicking(false);
+  let abc = score.abc, origin = "bu düzenlemenin notası";
+  try {
+    if (item.score_url) {
+      const response = await fetch(item.score_url);
+      if (!response.ok) throw new Error(`bestenin notası alınamadı (${response.status})`);
+      abc = await response.text();
+      origin = "bestenin kaydedilmiş düzeltmesi";
+    }
+    score.edit = { model: ScoreModel.parse(abc), history: [], sel: null, anchor: null, ranges: [], dirty: false, origin };
+  } catch (error) {
+    $("score-status").textContent = `Bu nota düzenlenemiyor: ${error.message}`;
+    return;
+  }
+  setEditing(true);
+  drawEdit();
+});
+
+function drawEdit() {
+  const edit = score.edit;
+  const { text, ranges } = ScoreModel.serialize(edit.model, { annotate: true });
+  edit.ranges = ranges;
+  score.tune = ABCJS.renderAbc("score-paper", text, {
+    responsive: "resize", add_classes: true, oneSvgPerLine: true, clickListener: editClick,
+    paddingleft: 16, paddingright: 16, paddingtop: 12, paddingbottom: 12,
+    staffwidth: 900, wrap: { minSpacing: 1.8, maxSpacing: 2.7, preferredMeasuresPerLine: 4 },
+  })[0];
+  markSelection();
+  renderSections();
+  renderCompare();
+  const sel = edit.sel;
+  $("score-sel").textContent = sel
+    ? `Seçili: ${sel[0] === sel[1] ? `ölçü ${sel[0] + 1}` : `ölçü ${sel[0] + 1}–${sel[1] + 1}`}`
+    : "Bir ölçüye tıkla, Shift ile aralık seç ya da yukarıdan bir bölüm seç.";
+  $("score-set-section").disabled = $("score-swap").disabled = !sel;
+  $("score-undo").disabled = !edit.history.length;
+  $("score-save").disabled = !edit.dirty;
+  $("score-status").textContent = `Düzenleniyor: ${edit.origin}.` + (edit.dirty ? " Kaydedilmemiş değişiklik var." : "");
+}
+
+// Selected bars are coloured note by note (abcjs knows each drawn element's place in the text).
+function markSelection() {
+  const sel = score.edit.sel;
+  if (!sel || !score.tune) return;
+  const spans = score.edit.ranges.filter((r) => r.bar >= sel[0] && r.bar <= sel[1]);
+  for (const line of score.tune.lines || []) for (const staff of line.staff || []) for (const voice of staff.voices || []) {
+    for (const element of voice) {
+      if (element.startChar == null || !spans.some((r) => element.startChar >= r.from && element.startChar < r.to)) continue;
+      for (const node of (element.abselem && element.abselem.elemset) || []) node.classList.add("abcjs-selected-bar");
+    }
+  }
+}
+
+function editClick(element, tuneNumber, classes, analysis, drag, mouseEvent) {
+  if (!score.edit || !element || element.startChar == null) return;
+  const hit = score.edit.ranges.find((r) => element.startChar >= r.from && element.startChar < r.to);
+  if (!hit) return;
+  const edit = score.edit;
+  if (mouseEvent && mouseEvent.shiftKey && edit.anchor != null) {
+    edit.sel = [Math.min(edit.anchor, hit.bar), Math.max(edit.anchor, hit.bar)];
+  } else {
+    edit.anchor = hit.bar;
+    edit.sel = [hit.bar, hit.bar];
+  }
+  drawEdit();
+}
+
+function renderSections() {
+  const edit = score.edit;
+  const sel = edit.sel;
+  $("score-sections").replaceChildren(...ScoreModel.sections(edit.model).map((run) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "section-chip" + (run.sung ? " sung" : "") + (sel && sel[0] === run.from && sel[1] === run.to ? " on" : "");
+    chip.textContent = `${run.label || "adsız"} · ${run.from + 1}–${run.to + 1} ${run.sung ? "🎤" : "🎹"}`;
+    chip.title = run.sung ? "Bu bölümde söylenen (Vocal) notalar var"
+      : run.pickup ? "Enstrüman; son ölçüdeki vokal notaları sonraki bölüme giriş (bağlı nota)" : "Bu bölüm yalnız enstrüman";
+    chip.onclick = () => {
+      edit.sel = [run.from, run.to];
+      edit.anchor = run.from;
+      if (run.label) $("score-label").value = run.label;
+      drawEdit();
+    };
+    return chip;
+  }));
+}
+
+// YuE2 matches lyric sections to the score's sung sections by name and order; show where they differ.
+function renderCompare() {
+  const item = scoreSource();
+  const lyrics = (item && item.lyrics) || score.job.lyrics || "";
+  const sung = ScoreModel.sections(score.edit.model).filter((run) => run.sung);
+  const scoreNames = sung.map((run) => sectionName(run.label || ""));
+  const lyricNames = lyricSections(lyrics).map((section) => section.name);
+  const line = (label, names) => {
+    const p = document.createElement("div");
+    p.textContent = `${label}: ${names.length ? names.join(" → ") : "—"}`;
+    return p;
+  };
+  const verdict = document.createElement("div");
+  const hints = [];
+  if (!lyricNames.length) {
+    verdict.className = "muted";
+    verdict.textContent = "Karşılaştırılacak söz yok.";
+  } else if (scoreNames.join() === lyricNames.join()) {
+    verdict.className = "ok";
+    verdict.textContent = "✓ Söylenen bölümlerin sırası sözlerle aynı.";
+  } else {
+    verdict.className = "warn";
+    verdict.textContent = "⚠ Sıra farklı: YuE2 sözleri bölümlere kendisi dağıtır, kayma olabilir.";
+    if (scoreNames[0] === "intro" && lyricNames[0] !== "intro") {
+      hints.push("Intro'da söylenen notalar var ama sözlerde [Intro] yok. Giriş enstrümanla çalınacaksa introyu seçip Vokal ⇄ Enstrüman yap.");
+    }
+    const missing = [...new Set(lyricNames.filter((name) => !scoreNames.includes(name)))];
+    if (missing.length) hints.push(`Sözlerde olup notada olmayan bölüm: ${missing.join(", ")}. İlgili ölçüleri seçip bölüm adını ver.`);
+  }
+  const from = item && item.lyrics ? "Bestenin sözleri" : "Bu düzenlemenin sözleri";
+  $("score-compare").replaceChildren(line("Notada söylenen bölümler", scoreNames), line(from, lyricNames), verdict,
+    ...hints.map((text) => { const p = document.createElement("div"); p.className = "muted"; p.textContent = text; return p; }));
+}
+
+function applyEdit(model, sel) {
+  const edit = score.edit;
+  edit.history.push({ model: edit.model, sel: edit.sel });
+  edit.model = model;
+  if (sel) edit.sel = sel;
+  edit.dirty = true;
+  drawEdit();
+}
+
+$("score-set-section").addEventListener("click", () => {
+  const sel = score.edit && score.edit.sel;
+  if (sel) applyEdit(ScoreModel.setSection(score.edit.model, sel[0], sel[1], $("score-label").value));
+});
+
+$("score-swap").addEventListener("click", () => {
+  const sel = score.edit && score.edit.sel;
+  if (!sel) return;
+  const { model, from, to } = ScoreModel.swapVoices(score.edit.model, sel[0], sel[1]);
+  applyEdit(model, [from, to]);
+  if (from !== sel[0] || to !== sel[1]) {
+    $("score-status").textContent += ` Bağlı (uzatılan) bir nota bölünmesin diye seçim ölçü ${from + 1}–${to + 1} olarak ayarlandı; bağlı nota devamıyla aynı seste kaldı.`;
+  }
+});
+
+$("score-undo").addEventListener("click", () => {
+  const edit = score.edit;
+  const last = edit && edit.history.pop();
+  if (!last) return;
+  edit.model = last.model;
+  edit.sel = last.sel;
+  edit.dirty = edit.history.length > 0;
+  drawEdit();
+});
+
+function leaveEdit() {
+  setEditing(false);
+  score.words = abcWithLyrics(score.abc, score.job.lyrics, score.job.lyrics_start || 0);
+  drawScore();
+  setScoreButtons(true);
+}
+
+const editUnsaved = () => !!(score.edit && score.edit.dirty);
+
+$("score-cancel").addEventListener("click", () => {
+  if (editUnsaved() && !confirm("Kaydedilmemiş değişiklikler silinsin mi?")) return;
+  leaveEdit();
+});
+
+function updateSource(updated) {
+  sources = sources.map((s) => (s.id === updated.id ? { ...s, ...updated } : s));
+  renderSources();
+}
+
+$("score-save").addEventListener("click", async () => {
+  const item = scoreSource();
+  const edit = score.edit;
+  if (!item || !edit) return;
+  const abc = ScoreModel.serialize(edit.model).text;
+  $("score-save").disabled = true;
+  try {
+    updateSource(await api(`/sources/${item.id}/score`, { method: "PUT", body: JSON.stringify({ abc }) }));
+    score.abc = abc;
+    leaveEdit();
+    $("score-status").textContent = `Besteye kaydedildi. "${item.name}" bestesinden yapılacak yeni düzenlemeler bu notayla üretilecek (melodi kayıttan yeniden çıkarılmaz).`;
+  } catch (error) {
+    $("score-save").disabled = false;
+    $("score-status").textContent = `Kaydedilemedi: ${error.message}`;
+  }
+});
+
+$("score-reset").addEventListener("click", async () => {
+  const item = scoreSource();
+  if (!item || !confirm(`"${item.name}" bestesinin düzeltilmiş notası silinsin mi? Yeni düzenlemeler melodiyi yine kayıttan çıkarır.`)) return;
+  try {
+    updateSource(await api(`/sources/${item.id}/score`, { method: "DELETE" }));
+    score.abc = score.jobAbc;   // back to the score this arrangement was made from
+    leaveEdit();
+    $("score-status").textContent = "Düzeltme silindi; yeni düzenlemeler melodiyi kayıttan çıkaracak.";
+  } catch (error) { $("score-status").textContent = `Silinemedi: ${error.message}`; }
+});
 
 async function openScore(job) {
   stopScore();
+  setEditing(false);
   score.job = job;
   score.abc = "";
   score.tune = null;
@@ -1086,7 +1317,7 @@ async function openScore(job) {
     if (!response.ok) throw new Error(`nota dosyası alınamadı (${response.status})`);
     const abc = await response.text();
     if (score.job !== job) return;   // another score was opened meanwhile
-    score.abc = abc;
+    score.abc = score.jobAbc = abc;
     score.words = abcWithLyrics(abc, job.lyrics, job.lyrics_start || 0);
     drawScore();
     setScoreButtons(true);
@@ -1168,9 +1399,11 @@ $("score-midi").addEventListener("click", () => {
   setTimeout(() => URL.revokeObjectURL(link.href), 10000);
 });
 
-$("score-close").addEventListener("click", () => $("score-modal").close());
-$("score-modal").addEventListener("click", (event) => { if (event.target === $("score-modal")) $("score-modal").close(); });
-$("score-modal").addEventListener("close", stopScore);
+const closeScore = () => { if (!editUnsaved() || confirm("Kaydedilmemiş nota değişiklikleri silinsin mi?")) $("score-modal").close(); };
+$("score-close").addEventListener("click", closeScore);
+$("score-modal").addEventListener("click", (event) => { if (event.target === $("score-modal")) closeScore(); });
+$("score-modal").addEventListener("cancel", (event) => { event.preventDefault(); closeScore(); });
+$("score-modal").addEventListener("close", () => { stopScore(); setEditing(false); });
 
 // ---------------------------------------------------------------- player bar
 // One player for the whole page. Covers with stems play instrumental + vocals in sync,
