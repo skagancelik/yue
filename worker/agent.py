@@ -32,6 +32,7 @@ TASKS = "tasks"           # owner of non-cover queue items (e.g. stem separation
 SEPARATOR = "/opt/yue/sep/.venv/bin/audio-separator"
 SEPARATOR_MODELS = "/opt/yue/sep/models"
 SEPARATOR_MODEL = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"   # keep in sync with setup-separator.sh
+SEPARATOR_TIMEOUT = 10 * 60   # a 3 min song takes ~3 min on the L4; anything far beyond that is stuck
 
 table = boto3.resource("dynamodb", region_name=REGION).Table(TABLE)
 s3 = boto3.client("s3", region_name=REGION)
@@ -41,6 +42,7 @@ state_lock = threading.Lock()
 state = {"state": "booting", "message": "Açılıyor"}
 active = {}               # job id -> thread
 last_activity = time.time()
+turbo_up = False          # YuE2 holds ~21 GB of the GPU; it is stopped while a separation runs
 
 
 def log(*args):
@@ -130,6 +132,7 @@ def turbo_headers():
 
 
 def start_turbo():
+    global turbo_up
     set_state("loading", "Model GPU'ya yükleniyor")
     subprocess.run(["systemctl", "restart", "yue2-serve.service"], check=True)
     deadline = time.time() + 30 * 60
@@ -137,6 +140,8 @@ def start_turbo():
         try:
             response = requests.get(f"{TURBO}/health/ready", timeout=5)
             if response.status_code == 200:
+                turbo_up = True
+                touch()
                 return
             if response.json().get("status") == "failed":
                 raise RuntimeError("YuE2-Turbo startup failed, see /var/log/yue2-serve.log")
@@ -308,13 +313,20 @@ def queue_stems(job_id):
         update_job(job_id, stems_status="failed", stems_error="Vokal ayırma sıraya alınamadı")
 
 
-def separate(source, out, env=None):
+def stop_turbo():
+    """Free the GPU for the separator; the work loop restarts YuE2 when the next cover is claimed."""
+    global turbo_up
+    turbo_up = False
+    subprocess.run(["systemctl", "stop", "yue2-serve.service"])
+
+
+def separate(source, out):
     names = json.dumps({"Instrumental": "instrumental", "Vocals": "vocals"})
     return subprocess.run(
         [SEPARATOR, str(source), "-m", SEPARATOR_MODEL, "--model_file_dir", SEPARATOR_MODELS,
          "--output_dir", str(out), "--output_format", "FLAC", "--sample_rate", "48000",
          "--custom_output_names", names],
-        capture_output=True, text=True, env=env)
+        capture_output=True, text=True, timeout=SEPARATOR_TIMEOUT)
 
 
 def process_stems(task):
@@ -333,13 +345,20 @@ def process_stems(task):
         update_job(job_id, stems_status="running", stems_message="Vokal ayrılıyor")
         source = work / "cover.flac"
         s3.download_file(BUCKET, job["flac_key"], str(source))
+        stop_turbo()
         started = time.time()
-        result = separate(source, out)
+        try:
+            result = separate(source, out)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"Vokal ayırma {SEPARATOR_TIMEOUT // 60} dakikada bitmedi, durduruldu; tekrar deneyin")
         if result.returncode != 0 and "out of memory" in (result.stdout + result.stderr).lower():
-            # YuE2 keeps most of the GPU; fall back to CPU rather than failing.
-            log("separator OOM on GPU, retrying on CPU", task_id)
-            update_job(job_id, stems_message="Vokal ayrılıyor (GPU dolu, işlemcide — biraz sürer)")
-            result = separate(source, out, env={**os.environ, "CUDA_VISIBLE_DEVICES": ""})
+            # Never fall back to CPU (a 4 vCPU box takes far too long): requeue for a fresh GPU attempt.
+            log("separator OOM on GPU", task_id)
+            if int(task.get("attempts", 1)) < MAX_ATTEMPTS:
+                update_job(task_id, status="queued", stage="queued", message="Yeniden sırada", queue="q")
+                update_job(job_id, stems_status="queued", stems_message="GPU doluydu, yeniden sırada")
+                return
+            raise RuntimeError("Vokal ayırma GPU belleğine sığmadı; tekrar deneyin")
         if result.returncode != 0:
             log("separator failed:", result.stdout[-2000:], result.stderr[-2000:])
             raise RuntimeError("Vokal ayırma başarısız: " + (result.stderr or result.stdout).strip()[-300:])
@@ -402,14 +421,18 @@ def work_loop():
         if len(active) < MAX_PARALLEL:
             queue = table.query(IndexName="queue", KeyConditionExpression=Key("queue").eq("q"),
                                 Limit=25)["Items"]
-            # Covers first; only ONE separation at a time (it shares the GPU with YuE2 and falls back to CPU on OOM).
+            # Covers first. A separation stops YuE2 to get the whole GPU, so it runs alone:
+            # only when no cover is running or waiting, and no cover starts until it is done.
             queue.sort(key=lambda item: item.get("kind") == "stems")
+            covers_waiting = any(item.get("kind") != "stems" for item in queue)
             for job in queue:
-                if len(active) >= MAX_PARALLEL:
+                if len(active) >= MAX_PARALLEL or any(kinds.get(i) == "stems" for i in active):
                     break
                 kind = "stems" if job.get("kind") == "stems" else "cover"
-                if kind == "stems" and any(kinds.get(i) == "stems" for i in active):
+                if kind == "stems" and (active or covers_waiting):
                     continue
+                if kind == "cover" and not turbo_up:
+                    start_turbo()
                 claimed = claim(job)
                 if claimed:
                     log("claimed", kind, job["id"])
