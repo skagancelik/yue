@@ -287,6 +287,15 @@ a.menu-item { text-decoration: none; display: block; }
 .lyrics-text { margin: 0; padding: 8px 20px 16px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 14px/1.6 ui-monospace, "SF Mono", Menlo, monospace; user-select: text; }
 .modal-actions { display: flex; align-items: center; gap: 8px; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
 
+/* ---- score modal: sheet music is drawn black on white, like paper ---- */
+.score-modal { width: min(1000px, calc(100vw - 32px)); }
+.score-wrap { overflow: auto; padding: 0 20px 16px; min-height: 0; }
+.score-paper { background: #fff; color: #000; border-radius: 10px; }
+.score-paper:empty { display: none; }
+.score-paper svg { display: block; }
+.score-paper .abcjs-note_playing { fill: #e0245e; }
+.score-modal .modal-actions { flex-wrap: wrap; }
+
 /* ---- player bar ---- */
 body.has-player { padding-bottom: 88px; }
 .playerbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;

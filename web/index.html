@@ -226,6 +226,7 @@
         <div class="stems-error error small hidden"></div>
         <div class="job-foot">
           <button type="button" class="btn ghost small lyrics-btn">📄 Sözler</button>
+          <button type="button" class="btn ghost small score-btn hidden" title="Besteden çıkarılan melodiyi nota olarak göster">🎼 Nota</button>
           <button class="btn ghost small stems-btn hidden" title="Vokali ayırıp vokalsiz altyapı çıkar">🎙 Vokali ayır</button>
           <span class="meta muted small"></span>
         </div>
@@ -243,6 +244,23 @@
       <button type="button" id="lyrics-copy" class="btn primary small">Kopyala</button>
       <button type="button" id="lyrics-copy-style" class="btn ghost small">Stili kopyala</button>
       <span id="lyrics-note" class="muted small"></span>
+    </div>
+  </dialog>
+
+  <dialog id="score-modal" class="modal score-modal">
+    <div class="modal-head">
+      <h3 id="score-title"></h3>
+      <button type="button" id="score-close" class="icon-btn" aria-label="Kapat">✕</button>
+    </div>
+    <div class="score-wrap">
+      <p id="score-status" class="muted small"></p>
+      <div id="score-paper" class="score-paper"></div>
+    </div>
+    <div class="modal-actions">
+      <button type="button" id="score-play" class="btn primary small" disabled>▶ Melodiyi çal</button>
+      <button type="button" id="score-print" class="btn ghost small" disabled>🖨 PDF / Yazdır</button>
+      <button type="button" id="score-midi" class="btn ghost small" disabled>⬇ MIDI</button>
+      <a id="score-abc" class="btn ghost small" rel="noopener">⬇ ABC</a>
     </div>
   </dialog>
 

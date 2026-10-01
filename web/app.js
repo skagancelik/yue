@@ -739,6 +739,9 @@ function fillJob(node, job) {
   fillStems(node, job);
   fillNote(node, job);
   node.querySelector(".lyrics-btn").onclick = () => openLyrics(job);
+  const scoreButton = node.querySelector(".score-btn");
+  scoreButton.classList.toggle("hidden", !job.abc_download);
+  scoreButton.onclick = () => openScore(job);
 
   const error = node.querySelector(".job-error");
   error.classList.toggle("hidden", !job.error);
@@ -818,6 +821,124 @@ $("lyrics-copy").addEventListener("click", () => lyricsJob && copyFromModal(lyri
 $("lyrics-copy-style").addEventListener("click", () => lyricsJob && copyFromModal(lyricsJob.style || "", "Stil"));
 $("lyrics-close").addEventListener("click", () => $("lyrics-modal").close());
 $("lyrics-modal").addEventListener("click", (event) => { if (event.target === $("lyrics-modal")) $("lyrics-modal").close(); });
+
+// ---------------------------------------------------------------- score modal
+// The melody SheetSage2 took from the source is saved as ABC text. abcjs (loaded on first use)
+// draws it as sheet music, plays it with a piano sound and turns it into MIDI.
+
+const ABCJS_SRC = "https://cdnjs.cloudflare.com/ajax/libs/abcjs/6.5.2/abcjs-basic-min.js";
+let abcjsLoading = null;
+function loadAbcjs() {
+  if (window.ABCJS) return Promise.resolve();
+  if (!abcjsLoading) {
+    abcjsLoading = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = ABCJS_SRC;
+      script.onload = resolve;
+      script.onerror = () => { abcjsLoading = null; reject(new Error("nota kütüphanesi yüklenemedi")); };
+      document.head.appendChild(script);
+    });
+  }
+  return abcjsLoading;
+}
+
+const score = { job: null, abc: "", tune: null, synth: null, timer: null, audio: null };
+
+function stopScore() {
+  if (score.synth) score.synth.stop();
+  if (score.timer) score.timer.stop();
+  score.synth = null;
+  score.timer = null;
+  document.querySelectorAll("#score-paper .abcjs-note_playing").forEach((el) => el.classList.remove("abcjs-note_playing"));
+  $("score-play").textContent = "▶ Melodiyi çal";
+}
+
+function setScoreButtons(ready) {
+  for (const id of ["score-play", "score-print", "score-midi"]) $(id).disabled = !ready;
+}
+
+async function openScore(job) {
+  stopScore();
+  score.job = job;
+  score.abc = "";
+  score.tune = null;
+  $("score-title").textContent = `${job.title} · Nota`;
+  $("score-abc").href = job.abc_download;
+  $("score-paper").replaceChildren();
+  $("score-status").textContent = "Nota yükleniyor…";
+  setScoreButtons(false);
+  $("score-modal").showModal();
+  try {
+    const [response] = await Promise.all([fetch(job.abc_download), loadAbcjs()]);
+    if (!response.ok) throw new Error(`nota dosyası alınamadı (${response.status})`);
+    const abc = await response.text();
+    if (score.job !== job) return;   // another score was opened meanwhile
+    score.abc = abc;
+    score.tune = ABCJS.renderAbc("score-paper", abc, { responsive: "resize", add_classes: true, paddingleft: 16, paddingright: 16, paddingtop: 16, paddingbottom: 16 })[0];
+    $("score-status").textContent = "Besteden çıkarılan melodi (YuE2'ye verilen nota). Akor içermez.";
+    setScoreButtons(true);
+  } catch (error) {
+    if (score.job === job) $("score-status").textContent = `Nota gösterilemedi: ${error.message}`;
+  }
+}
+
+$("score-play").addEventListener("click", async () => {
+  if (score.synth) { stopScore(); return; }
+  const button = $("score-play");
+  button.disabled = true;
+  button.textContent = "Ses yükleniyor…";
+  try {
+    // The AudioContext is made inside the click so the browser lets it play.
+    score.audio = score.audio || new (window.AudioContext || window.webkitAudioContext)();
+    await score.audio.resume();
+    const synth = new ABCJS.synth.CreateSynth();
+    await synth.init({ visualObj: score.tune, audioContext: score.audio });
+    await synth.prime();
+    let lit = [];
+    const timer = new ABCJS.TimingCallbacks(score.tune, {
+      eventCallback: (event) => {
+        lit.forEach((el) => el.classList.remove("abcjs-note_playing"));
+        if (!event) { stopScore(); return; }
+        lit = event.elements.flat();
+        lit.forEach((el) => el.classList.add("abcjs-note_playing"));
+      },
+    });
+    score.synth = synth;
+    score.timer = timer;
+    synth.start();
+    timer.start();
+    button.textContent = "■ Durdur";
+  } catch (error) {
+    stopScore();
+    $("score-status").textContent = `Çalınamadı: ${error.message || error}`;
+  }
+  button.disabled = false;
+});
+
+$("score-print").addEventListener("click", () => {
+  const win = window.open("", "_blank");
+  if (!win) { $("score-status").textContent = "Açılır pencere engellendi; PDF için izin ver."; return; }
+  const title = score.job.title.replace(/[<&>]/g, "");
+  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
+    <style>body{margin:24px;font-family:system-ui,sans-serif}h1{font-size:18px;margin:0 0 12px}svg{width:100%;height:auto}</style>
+    </head><body><h1>${title}</h1>${$("score-paper").innerHTML}</body></html>`);
+  win.document.close();
+  win.focus();
+  win.print();
+});
+
+$("score-midi").addEventListener("click", () => {
+  const midi = ABCJS.synth.getMidiFile(score.abc, { midiOutputType: "binary" })[0];
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(new Blob([midi], { type: "audio/midi" }));
+  link.download = `${score.job.title.replace(/[\\/:*?"<>|]+/g, "").trim() || "nota"}.mid`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+});
+
+$("score-close").addEventListener("click", () => $("score-modal").close());
+$("score-modal").addEventListener("click", (event) => { if (event.target === $("score-modal")) $("score-modal").close(); });
+$("score-modal").addEventListener("close", stopScore);
 
 // ---------------------------------------------------------------- player bar
 // One player for the whole page. Covers with stems play instrumental + vocals in sync,
