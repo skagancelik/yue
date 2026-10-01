@@ -27,9 +27,9 @@ provider "aws" {
 
 variable "region" { default = "eu-central-1" }
 variable "az" { default = "eu-central-1b" }
-variable "gpu_instance_type" { default = "g6.2xlarge" }
+variable "gpu_instance_type" { default = "g6.xlarge" }
 # Tried in order when the primary type has no capacity.
-variable "gpu_fallback_types" { default = "g5.2xlarge,g6e.xlarge,g6.xlarge,g5.xlarge" }
+variable "gpu_fallback_types" { default = "g5.xlarge,g6.2xlarge,g5.2xlarge,g6e.xlarge" }
 variable "idle_minutes" { default = 5 }
 variable "root_volume_gb" { default = 45 }
 variable "github_repo" { default = "https://github.com/skagancelik/yue.git" }

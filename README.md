@@ -11,12 +11,14 @@ Tarayıcı ──► CloudFront ──► S3 (web/)                         [her
                   └─ /api/* ─► Lambda (yue-api) ─► DynamoDB (yue-jobs)
                                    │  iş gelince EC2 StartInstances
                                    ▼
-                GPU EC2 g6.2xlarge (L4 24GB) — normalde STOPPED
+                GPU EC2 g6.xlarge (L4 24GB) — normalde STOPPED
                   yue-agent ─► YuE2-Turbo (vLLM) /v1/covers
                      SheetSage2: yüklenen şarkı → melodi (ABC)
                      YuE2-3B: melodi + söz + stil → yeni şarkı (48 kHz)
                   sonuç ─► S3 outputs/ (MP3 320k + FLAC + ABC nota)
-                  10 dk iş yoksa kendini kapatır
+                  BS-RoFormer: şarkı → altyapı + vokal (YuE2 durdurulur, GPU'yu tek başına kullanır)
+                  "Üretim sonunda GPU'yu durdur" seçiliyse iş bitince ~30 sn'de,
+                  değilse 10 dk iş yoksa kendini kapatır
 yue-janitor (5 dk'da bir): boştaki/ölü GPU'yu durdurur, bekleyen iş varsa başlatır
 ```
 
@@ -31,11 +33,13 @@ yue-janitor (5 dk'da bir): boştaki/ölü GPU'yu durdurur, bekleyen iş varsa ba
 | Kalem | Tutar |
 |---|---|
 | Sabit (45 GB gp3 disk + S3 + Lambda/DynamoDB/CloudFront free tier) | ≈ $5/ay |
-| GPU g6.2xlarge on-demand (sadece açıkken) | ≈ $1.20/saat |
-| İlk şarkı (açılış + üretim + 10 dk bekleme) | ≈ $0.35 |
-| Aynı oturumda sonraki şarkı | ≈ $0.08 |
+| GPU g6.xlarge on-demand (sadece açıkken) | ≈ $1/saat |
+| İlk şarkı, "GPU'yu durdur" açık (açılış ~3 dk + üretim ~3 dk + vokal ayrımı ~3,5 dk) | ≈ $0.17 |
+| Aynı, "GPU'yu durdur" kapalı (+10 dk boşta bekleme) | ≈ $0.33 |
+| Aynı oturumda sonraki şarkı (üretim + vokal ayrımı + YuE2'yi yeniden yükleme) | ≈ $0.15 |
 
-Kapasite yoksa sırasıyla `g5.2xlarge` → `g6e.xlarge` → `g6.xlarge` → `g5.xlarge` denenir (son ikisi aynı 24 GB GPU, daha az RAM). Bütçe alarmı: $30/ay (`yue-monthly`).
+Kapasite yoksa sırasıyla `g5.xlarge` → `g6.2xlarge` → `g5.2xlarge` → `g6e.xlarge` denenir. Açılışta önce en son
+çalışan tip denenir; Frankfurt'ta `g6.2xlarge` / `g6e.xlarge` kapasitesi sık sık olmuyor. Bütçe alarmı: $30/ay (`yue-monthly`).
 
 ## Repo
 | Yol | İçerik |
