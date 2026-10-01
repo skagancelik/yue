@@ -1,0 +1,30 @@
+name: backfill-copyright
+
+# One-off: turn the copyright credit on for every source song uploaded before the checkbox existed.
+on: workflow_dispatch
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::730335425452:role/yue-github-deploy
+          aws-region: eu-central-1
+      - name: Set copyright on all sources
+        run: |
+          ids=$(aws dynamodb scan --table-name yue-jobs --filter-expression "#o = :s" \
+            --expression-attribute-names '{"#o":"owner"}' --expression-attribute-values '{":s":{"S":"sources"}}' \
+            --projection-expression "id" --query 'Items[].id.S' --output text)
+          count=0
+          for id in $ids; do
+            aws dynamodb update-item --table-name yue-jobs --key "{\"id\":{\"S\":\"$id\"}}" \
+              --update-expression "SET copyright = :t" --expression-attribute-values '{":t":{"BOOL":true}}'
+            count=$((count + 1))
+          done
+          echo "updated $count sources"
+          echo "### $count beste güncellendi" >> "$GITHUB_STEP_SUMMARY"
