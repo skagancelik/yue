@@ -2,9 +2,8 @@
 
 const $ = (id) => document.getElementById(id);
 const API = "/api";
-const STATUS_TEXT = { queued: "Sırada", running: "Üretiliyor", succeeded: "Hazır", failed: "Hata", cancelled: "İptal" };
+const STATUS_TEXT = { queued: "Sırada", running: "Düzenleniyor", succeeded: "Hazır", failed: "Hata", cancelled: "İptal" };
 const GPU_HOURLY_USD = { "g6.2xlarge": 1.2, "g5.2xlarge": 1.46, "g6e.xlarge": 2.24, "g6.xlarge": 0.98, "g5.xlarge": 1.23 };
-const UNFILED = "unfiled";
 
 let passcode = null;
 let source = null;          // selected source for the next job: {id?, key?, name, url}
@@ -14,7 +13,7 @@ let jobs = [];
 let styles = [];
 let gpu = null;
 let pollTimer = null;
-let view = { type: "folder", id: null, tab: "sources" };   // or {type: "liked"} / {type: "folder", id: UNFILED}
+let view = { type: "folder", id: null, tab: "sources" };   // or {type: "liked"}
 let lastFolderId = null;
 const pendingEdit = new Set();   // freshly uploaded sources open their style/lyrics editor
 let uploads = [];                // uploads in flight: {name, fraction, error}
@@ -79,26 +78,19 @@ function activeTab() {
 function setView(next) {
   view = { tab: view.tab, ...next };
   closeMenus();
-  if (view.type === "folder" && view.id && view.id !== UNFILED) lastFolderId = view.id;
+  if (view.type === "folder" && view.id) lastFolderId = view.id;
   try { localStorage.setItem("yue.view", JSON.stringify(view)); } catch (_) {}
   if (source && source.folder_id && (!currentFolder() || source.folder_id !== view.id)) clearSource();
   render();
 }
 
-function unfiledJobs() {
-  const known = new Set(folders.map((f) => f.id));
-  return jobs.filter((j) => !j.folder_id || !known.has(j.folder_id));
-}
-
 function renderSidebar() {
   const list = $("folder-list");
   const items = folders.map((f) => ({ id: f.id, name: f.name, count: jobs.filter((j) => j.folder_id === f.id).length }));
-  const unfiled = unfiledJobs();
-  if (unfiled.length) items.push({ id: UNFILED, name: "Diğer", count: unfiled.length, muted: true });
   list.replaceChildren(...items.map((item) => {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "nav-item" + (view.type === "folder" && view.id === item.id ? " active" : "") + (item.muted ? " muted" : "");
+    button.className = "nav-item" + (view.type === "folder" && view.id === item.id ? " active" : "");
     button.innerHTML = `<span class="nav-icon">📁</span><span class="nav-name"></span><span class="nav-count"></span>`;
     button.querySelector(".nav-name").textContent = item.name;
     button.querySelector(".nav-count").textContent = item.count || "";
@@ -506,21 +498,17 @@ function fmtAgo(epochMs) {
 
 function visibleJobs() {
   if (view.type === "liked") return jobs.filter((j) => j.liked);
-  if (view.id === UNFILED) return unfiledJobs();
   return jobs.filter((j) => j.folder_id === view.id);
 }
 
 function render() {
   // Fall back to a real folder when the remembered one is gone.
-  if (view.type === "folder" && view.id !== UNFILED && !currentFolder()) {
+  if (view.type === "folder" && !currentFolder()) {
     view = folders[0] ? { type: "folder", id: folders[0].id } : { type: "folder", id: null };
-  }
-  if (view.type === "folder" && view.id === UNFILED && !unfiledJobs().length && folders[0]) {
-    view = { type: "folder", id: folders[0].id };
   }
   const folder = currentFolder();
   const tab = activeTab();
-  const onboarding = !folders.length && !unfiledJobs().length && view.type !== "liked";
+  const onboarding = !folders.length && view.type !== "liked";
   $("no-folder").classList.toggle("hidden", !onboarding);
   document.querySelector(".library").classList.toggle("hidden", onboarding);
   const showCreate = !!folder && tab === "sources";
@@ -529,7 +517,7 @@ function render() {
   $("shell").classList.toggle("no-side", view.type === "liked");
   document.querySelector(".sidebar").classList.toggle("hidden", view.type === "liked");
   $("create-folder-name").textContent = folder ? folder.name : "";
-  $("view-title").textContent = view.type === "liked" ? "♥ Beğendiklerim" : folder ? folder.name : "Diğer";
+  $("view-title").textContent = view.type === "liked" ? "♥ Beğendiklerim" : folder ? folder.name : "";
   $("subtabs").classList.toggle("hidden", !folder);
   document.querySelectorAll(".subtab").forEach((b) => {
     const on = b.dataset.tab === tab;
@@ -539,11 +527,11 @@ function render() {
   $("sources-block").classList.toggle("hidden", !(folder && tab === "sources"));
   $("jobs-block").classList.toggle("hidden", tab !== "jobs");
   $("jobs-head").classList.toggle("hidden", !!folder);
-  $("jobs-title").textContent = view.type === "liked" ? "Beğenilen düzenlemeler" : "Diğer düzenlemeler";
+  $("jobs-title").textContent = "Beğenilen düzenlemeler";
   $("folder-menu").classList.toggle("hidden", !folder);
   $("empty-text").textContent = view.type === "liked"
     ? "Henüz beğendiğin düzenleme yok. Bir düzenlemedeki ♡ ikonuna dokun."
-    : folder ? "Bu şarkıda henüz düzenleme yok. Yüklenen Besteler sekmesinden bir beste seçip düzenleme yap." : "Burada düzenleme yok.";
+    : folder ? "Bu şarkıda henüz düzenleme yok. Yüklenen Besteler sekmesinden bir beste seçip düzenleme yap." : "";
   renderSidebar();
   renderSources();
   renderJobs();
@@ -710,8 +698,8 @@ function fillJob(node, job) {
 
   const folder = folders.find((f) => f.id === job.folder_id);
   const folderLine = node.querySelector(".job-folder");
-  folderLine.classList.toggle("hidden", view.type !== "liked");
-  folderLine.textContent = `📁 ${folder ? folder.name : "Diğer"}`;
+  folderLine.classList.toggle("hidden", view.type !== "liked" || !folder);
+  folderLine.textContent = folder ? `📁 ${folder.name}` : "";
 
   const like = node.querySelector(".like");
   like.textContent = job.liked ? "♥" : "♡";

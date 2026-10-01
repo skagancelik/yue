@@ -300,10 +300,12 @@ def check_upload_size(key):
 
 
 def create_jobs(body):
-    folder_id = validate_text(body, "folder_id", 32, required=False)
+    # Every arrangement belongs to a song (folder); there are no unfiled ones.
+    if not body.get("folder_id"):
+        raise HttpError(400, "Önce bir şarkı seç; her düzenleme bir şarkıya ait olmalı")
+    folder_id = validate_text(body, "folder_id", 32)
     source_id = validate_text(body, "source_id", 32, required=False)
-    if folder_id:
-        get_folder(folder_id)
+    get_folder(folder_id)
     if source_id:
         source = get_item(source_id, SOURCES, "Beste bulunamadı")
         upload_key, body["source_name"] = source["key"], source["name"]
@@ -342,8 +344,7 @@ def create_jobs(body):
             "title": title, "style": style, "lyrics": lyrics, "seed": seed + index * 7919,
             "upload_key": upload_key, "source_name": source_name,
         }
-        if folder_id:
-            job["folder_id"] = folder_id
+        job["folder_id"] = folder_id
         if source_id:
             job["source_id"] = source_id
         if not auto_stems:
@@ -409,10 +410,9 @@ def update_job_fields(job_id, body):
         fields["liked"] = body["liked"]
     if "folder_id" in body:
         folder_id = body["folder_id"]
-        if folder_id is not None:
-            if not isinstance(folder_id, str):
-                raise HttpError(400, "Geçersiz şarkı")
-            get_folder(folder_id)
+        if not isinstance(folder_id, str):
+            raise HttpError(400, "Düzenleme bir şarkıya ait olmalı")
+        get_folder(folder_id)
         fields["folder_id"] = folder_id
     if "title" in body:
         fields["title"] = validate_text(body, "title", 120)
