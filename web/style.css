@@ -287,6 +287,11 @@ a.menu-item { text-decoration: none; display: block; }
 .lyrics-text { margin: 0; padding: 8px 20px 16px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 14px/1.6 ui-monospace, "SF Mono", Menlo, monospace; user-select: text; }
 .modal-actions { display: flex; align-items: center; gap: 8px; padding: 12px 20px 16px; border-top: 1px solid var(--line); }
 
+/* ---- copyright credit line ---- */
+.credit { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.credit-check { margin-top: 8px; color: var(--muted); }
+.block-head .credit-check { margin-top: 0; flex-basis: 100%; }
+
 /* ---- score modal: sheet music is drawn black on white, like paper ---- */
 .score-modal { width: min(1000px, calc(100vw - 32px)); }
 .score-wrap { overflow: auto; padding: 0 20px 16px; min-height: 0; }
@@ -295,6 +300,7 @@ a.menu-item { text-decoration: none; display: block; }
 .score-paper svg { display: block; }
 .score-paper .abcjs-note_playing { fill: #e0245e; }
 .score-modal .modal-actions { flex-wrap: wrap; }
+.score-lyrics-check { margin: 0 0 10px; }
 
 /* ---- player bar ---- */
 body.has-player { padding-bottom: 88px; }

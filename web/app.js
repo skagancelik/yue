@@ -198,11 +198,12 @@ function selectSource(item) {
   renderSources();
 }
 
-async function saveSourceText(item, style, lyrics, note) {
+async function saveSourceText(item, style, lyrics, note, copyright) {
   const body = { style, lyrics };
   if (note !== undefined) body.note = note;
+  if (copyright !== undefined) body.copyright = copyright;
   const updated = await api(`/sources/${item.id}`, { method: "PATCH", body: JSON.stringify(body) });
-  sources = sources.map((s) => (s.id === updated.id ? { ...s, style: updated.style, lyrics: updated.lyrics, note: updated.note } : s));
+  sources = sources.map((s) => (s.id === updated.id ? { ...s, style: updated.style, lyrics: updated.lyrics, note: updated.note, copyright: updated.copyright } : s));
   return updated;
 }
 
@@ -234,7 +235,7 @@ async function handleFile(file) {
       $("upload-bar").style.width = `${Math.round(fraction * 95)}%`;
     });
     const saved = await api(`/folders/${folder.id}/sources`, {
-      method: "POST", body: JSON.stringify({ upload_key: signed.key, name: file.name }),
+      method: "POST", body: JSON.stringify({ upload_key: signed.key, name: file.name, copyright: $("credit-create").checked }),
     });
     sources = [saved, ...sources];
     selectSource(saved);
@@ -283,7 +284,7 @@ async function uploadSources(files) {
       });
       await putWithProgress(signed.url, file, signed.content_type, (fraction) => { entry.fraction = fraction * 0.95; renderUploads(); });
       const saved = await api(`/folders/${folder.id}/sources`, {
-        method: "POST", body: JSON.stringify({ upload_key: signed.key, name: file.name }),
+        method: "POST", body: JSON.stringify({ upload_key: signed.key, name: file.name, copyright: $("credit-upload").checked }),
       });
       sources = [saved, ...sources];
       pendingEdit.add(saved.id);
@@ -297,11 +298,28 @@ async function uploadSources(files) {
 }
 
 $("source-upload").addEventListener("click", () => $("source-file").click());
+// The two upload places share one credit choice.
+for (const [from, to] of [["credit-create", "credit-upload"], ["credit-upload", "credit-create"]]) {
+  $(from).addEventListener("change", () => { $(to).checked = $(from).checked; });
+}
 $("source-file").addEventListener("change", (event) => { uploadSources([...event.target.files]); event.target.value = ""; });
 const sourcesBlock = $("sources-block");
 ["dragenter", "dragover"].forEach((type) => sourcesBlock.addEventListener(type, (e) => { e.preventDefault(); sourcesBlock.classList.add("over"); }));
 ["dragleave", "drop"].forEach((type) => sourcesBlock.addEventListener(type, () => sourcesBlock.classList.remove("over")));
 sourcesBlock.addEventListener("drop", (event) => { event.preventDefault(); uploadSources([...event.dataTransfer.files]); });
+
+const CREDIT = "Söz & Beste: Serkan Kağan Çelik ©️ Tüm Hakları Saklıdır";
+
+function showCredit(line, on) {
+  line.textContent = on ? CREDIT : "";
+  line.classList.toggle("hidden", !on);
+}
+
+// An arrangement carries the credit of the source song it was made from.
+function jobCredit(job) {
+  const item = job.source_id && sources.find((s) => s.id === job.source_id);
+  return !!(item && item.copyright);
+}
 
 function renderSources() {
   const folder = currentFolder();
@@ -322,6 +340,7 @@ function renderSources() {
     if (pendingEdit.delete(item.id)) node.classList.add("editing");
     node.classList.toggle("selected", !!source && source.id === item.id);
     node.querySelector(".source-name").textContent = item.name;
+    showCredit(node.querySelector(".source-credit"), item.copyright);
     const used = jobs.filter((j) => j.source_id === item.id).length;
     const saved = item.style || item.lyrics;
     node.querySelector(".source-meta").textContent = [used ? `${used} düzenleme` : "", saved ? "✓ stil ve söz kayıtlı" : "", fmtAgo(item.created_at)].filter(Boolean).join(" · ");
@@ -335,7 +354,10 @@ function renderSources() {
     const noteLine = node.querySelector(".source-note");
     noteLine.textContent = item.note || "";
     noteLine.classList.toggle("hidden", !item.note);
-    if (!node.classList.contains("editing")) node.querySelector(".src-note").value = item.note || "";
+    if (!node.classList.contains("editing")) {
+      node.querySelector(".src-note").value = item.note || "";
+      node.querySelector(".src-credit").checked = !!item.copyright;
+    }
     node.querySelector(".rename").onclick = async () => {
       const name = prompt("Beste adı", item.name);
       if (!name || !name.trim() || name.trim() === item.name) return;
@@ -349,7 +371,8 @@ function renderSources() {
     node.querySelector(".src-save").onclick = async () => {
       const note = node.querySelector(".src-note");
       try {
-        await saveSourceText(item, node.querySelector(".src-style").value.trim(), node.querySelector(".src-lyrics").value.trim(), node.querySelector(".src-note").value.trim());
+        await saveSourceText(item, node.querySelector(".src-style").value.trim(), node.querySelector(".src-lyrics").value.trim(),
+          node.querySelector(".src-note").value.trim(), node.querySelector(".src-credit").checked);
         note.textContent = "Kaydedildi";
         node.classList.remove("editing");
         if (source && source.id === item.id) selectSource(sources.find((s) => s.id === item.id));
@@ -739,6 +762,7 @@ function fillJob(node, job) {
   fillStems(node, job);
   fillNote(node, job);
   node.querySelector(".lyrics-btn").onclick = () => openLyrics(job);
+  showCredit(node.querySelector(".job-credit"), jobCredit(job));
   const scoreButton = node.querySelector(".score-btn");
   scoreButton.classList.toggle("hidden", !job.abc_download);
   scoreButton.onclick = () => openScore(job);
@@ -842,7 +866,125 @@ function loadAbcjs() {
   return abcjsLoading;
 }
 
-const score = { job: null, abc: "", tune: null, synth: null, timer: null, audio: null };
+const score = { job: null, abc: "", tune: null, synth: null, timer: null, audio: null, words: null };
+
+// ---- lyrics under the notes
+// YuE2 does not report which syllable it sang on which note, so this is an estimate: the lyrics
+// are split into Turkish syllables and laid on the vocal notes one by one, section by section
+// ([Verse] on the score's "% verse" part, …). It is right when the syllable counts match the melody.
+
+const VOWELS = "aeıioöuüâîûAEIİOÖUÜÂÎÛ";
+const isLetter = (ch) => /\p{L}/u.test(ch);
+
+// Turkish syllables: every syllable has one vowel; one consonant between vowels starts the next
+// syllable, of two or more only the last one does ("gel-mek", "kork-mak", "a-ra-ba").
+function syllables(word) {
+  const letters = [...word].map((ch, i) => ({ ch, i })).filter((x) => isLetter(x.ch));
+  const vowels = letters.map((x, k) => (VOWELS.includes(x.ch) ? k : -1)).filter((k) => k >= 0);
+  if (vowels.length < 2) return [word];
+  const cuts = [];
+  for (let v = 1; v < vowels.length; v++) {
+    const between = vowels[v] - vowels[v - 1] - 1;
+    cuts.push(letters[vowels[v] - (between === 0 ? 0 : 1)].i);
+  }
+  const chars = [...word];
+  return [0, ...cuts].map((start, k) => chars.slice(start, cuts[k] ?? chars.length).join(""));
+}
+
+const sectionName = (text) => text.toLowerCase().replace(/[^a-z]/g, "");
+
+// [{ name, syllables: [{ text, joined }] }]; joined = the next syllable is in the same word.
+function lyricSections(lyrics) {
+  const sections = [];
+  let current = null;
+  for (const raw of (lyrics || "").split(/\r?\n/)) {
+    const tag = raw.trim().match(/^\[([^\]]+)\]$/);
+    if (tag) { current = { name: sectionName(tag[1]), syllables: [] }; sections.push(current); continue; }
+    // Characters that mean something on an ABC w: line are dropped.
+    const words = raw.replace(/[-_*~|%\\]/g, " ").split(/\s+/).filter((w) => [...w].some(isLetter));
+    if (!words.length) continue;
+    if (!current) { current = { name: "", syllables: [] }; sections.push(current); }
+    for (const word of words) {
+      const parts = syllables(word);
+      parts.forEach((text, k) => current.syllables.push({ text, joined: k < parts.length - 1 }));
+    }
+  }
+  return sections.filter((section) => section.syllables.length);
+}
+
+// The notes of one ABC music line, as abcjs pairs them with w: syllables (rests are skipped):
+// true for a note that starts a syllable, false for the held continuation of a tie.
+function noteSlots(line) {
+  const token = /"[^"]*"|\[[A-Za-z]:[^\]]*\]|!.*?!|(?:\^\^|__|\^|_|=)?([A-Ga-gzxZX])[,']*[0-9]*\/*[0-9]*(-?)/g;
+  const slots = [];
+  let tied = false, match;
+  while ((match = token.exec(line))) {
+    if (!match[1]) continue;
+    if ("zxZX".includes(match[1])) { tied = false; continue; }
+    slots.push(!tied);
+    tied = match[2] === "-";
+  }
+  return slots;
+}
+
+// Returns the ABC with a w: line under every vocal line, and how many syllables found a note.
+function abcWithLyrics(abc, lyrics) {
+  const lines = abc.split(/\r?\n/);
+  const parts = [];   // vocal lines grouped by score section: { name, lines: [{ index, slots }] }
+  let body = false, voice = "", part = null, comment = "";
+  lines.forEach((line, index) => {
+    if (!body) { if (/^K:/.test(line)) body = true; return; }
+    const section = line.match(/^%\s*(.+)$/);
+    if (section) { comment = sectionName(section[1]); part = null; return; }
+    const voiceLine = line.match(/^V:\s*(\S+)/);
+    if (voiceLine) { voice = voiceLine[1]; return; }
+    if (/^[A-Za-z]:/.test(line) || !line.trim() || voice.toLowerCase() !== "vocal") return;
+    const slots = noteSlots(line);
+    if (!slots.some(Boolean)) return;
+    if (!part) { part = { name: comment, lines: [] }; parts.push(part); }
+    part.lines.push({ index, slots });
+  });
+  const sections = lyricSections(lyrics);
+  const total = sections.reduce((sum, section) => sum + section.syllables.length, 0);
+  if (!parts.length || !total) return { abc, placed: 0, total };
+
+  // Lyric sections go on score sections of the same name, in order; without matching names
+  // everything is laid out from the first vocal note.
+  const plan = [];   // [score part, syllables]
+  let next = 0;
+  const named = sections.every((section) => section.name) && parts.some((p) => p.name);
+  for (const section of sections) {
+    const found = named ? parts.findIndex((p, k) => k >= next && p.name === section.name) : -1;
+    if (found < 0) { plan.length = 0; break; }
+    plan.push([parts[found], section.syllables]);
+    next = found + 1;
+  }
+  if (!plan.length) {
+    const all = sections.flatMap((section) => section.syllables);
+    plan.push([{ lines: parts.flatMap((p) => p.lines) }, all]);
+  }
+
+  const wLines = new Map();
+  let placed = 0;
+  for (const [target, sylls] of plan) {
+    let k = 0;
+    for (const { index, slots } of target.lines) {
+      const out = [];
+      for (const starts of slots) {
+        const syl = starts && sylls[k++];
+        out.push(syl ? syl.text + (syl.joined ? "-" : " ") : "* ");
+      }
+      wLines.set(index, "w: " + out.join("").trim());
+    }
+    placed += Math.min(k, sylls.length);
+  }
+  const result = [];
+  lines.forEach((line, index) => {
+    result.push(line);
+    if (wLines.has(index)) result.push(wLines.get(index));
+  });
+  return { abc: result.join("\n"), placed, total };
+}
 
 function stopScore() {
   if (score.synth) score.synth.stop();
@@ -852,6 +994,25 @@ function stopScore() {
   document.querySelectorAll("#score-paper .abcjs-note_playing").forEach((el) => el.classList.remove("abcjs-note_playing"));
   $("score-play").textContent = "▶ Melodiyi çal";
 }
+
+function drawScore() {
+  stopScore();
+  const withLyrics = $("score-lyrics").checked && score.words.placed > 0;
+  // One SVG per staff line, so the PDF can break pages between lines.
+  score.tune = ABCJS.renderAbc("score-paper", withLyrics ? score.words.abc : score.abc, {
+    responsive: "resize", add_classes: true, oneSvgPerLine: true,
+    paddingleft: 16, paddingright: 16, paddingtop: 12, paddingbottom: 12,
+    // Short sixteenth notes need room for their syllables: two bars to a line.
+    staffwidth: 900, wrap: { minSpacing: 1.8, maxSpacing: 2.7, preferredMeasuresPerLine: 2 },
+  })[0];
+  const { placed, total } = score.words;
+  let status = "Besteden çıkarılan melodi (YuE2'ye verilen nota). Akor içermez.";
+  if (!total) status += " Bu düzenlemede söz yok.";
+  else if (withLyrics) status += ` Sözler tahmini yerleştirildi: ${placed}/${total} hece bir notaya denk geldi.`;
+  $("score-status").textContent = status;
+  $("score-lyrics").disabled = !total;
+}
+$("score-lyrics").addEventListener("change", () => { if (score.words) drawScore(); });
 
 function setScoreButtons(ready) {
   for (const id of ["score-play", "score-print", "score-midi"]) $(id).disabled = !ready;
@@ -874,8 +1035,8 @@ async function openScore(job) {
     const abc = await response.text();
     if (score.job !== job) return;   // another score was opened meanwhile
     score.abc = abc;
-    score.tune = ABCJS.renderAbc("score-paper", abc, { responsive: "resize", add_classes: true, paddingleft: 16, paddingright: 16, paddingtop: 16, paddingbottom: 16 })[0];
-    $("score-status").textContent = "Besteden çıkarılan melodi (YuE2'ye verilen nota). Akor içermez.";
+    score.words = abcWithLyrics(abc, job.lyrics);
+    drawScore();
     setScoreButtons(true);
   } catch (error) {
     if (score.job === job) $("score-status").textContent = `Nota gösterilemedi: ${error.message}`;
@@ -915,13 +1076,32 @@ $("score-play").addEventListener("click", async () => {
   button.disabled = false;
 });
 
+// The credit is printed at the foot of every page: a fixed element repeats on each printed page,
+// and the empty table footer keeps the same room free so music never runs under it.
+function scorePrintHtml() {
+  const escape = (text) => text.replace(/[<&>"]/g, (ch) => ({ "<": "&lt;", "&": "&amp;", ">": "&gt;", '"': "&quot;" })[ch]);
+  const title = escape(score.job.title);
+  const credit = jobCredit(score.job) ? `<div class="credit">${escape(CREDIT)}</div>` : "";
+  return `<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>${title}</title><style>
+    @page { margin: 14mm 12mm; }
+    body { margin: 0; font-family: system-ui, sans-serif; color: #000; background: #fff; }
+    h1 { font-size: 18px; margin: 0 0 8px; }
+    table { width: 100%; border-collapse: collapse; }
+    td { padding: 0; }
+    svg { display: block; width: 100%; height: auto; break-inside: avoid; page-break-inside: avoid; }
+    .abcjs-container { break-inside: avoid; page-break-inside: avoid; }
+    .credit { position: fixed; left: 0; right: 0; bottom: 0; text-align: center; font-size: 11px; color: #000; }
+    .room { height: 10mm; }
+  </style></head><body>
+    <table><tbody><tr><td><h1>${title}</h1>${$("score-paper").innerHTML}</td></tr></tbody>
+    <tfoot><tr><td><div class="room"></div></td></tr></tfoot></table>${credit}
+  </body></html>`;
+}
+
 $("score-print").addEventListener("click", () => {
   const win = window.open("", "_blank");
   if (!win) { $("score-status").textContent = "Açılır pencere engellendi; PDF için izin ver."; return; }
-  const title = score.job.title.replace(/[<&>]/g, "");
-  win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
-    <style>body{margin:24px;font-family:system-ui,sans-serif}h1{font-size:18px;margin:0 0 12px}svg{width:100%;height:auto}</style>
-    </head><body><h1>${title}</h1>${$("score-paper").innerHTML}</body></html>`);
+  win.document.write(scorePrintHtml());
   win.document.close();
   win.focus();
   win.print();

@@ -65,6 +65,8 @@
           </div>
         </div>
 
+        <label class="check credit-check"><input id="credit-create" type="checkbox" checked> Söz &amp; Beste: Serkan Kağan Çelik ©️ Tüm Hakları Saklıdır</label>
+
         <label class="field-label" for="title">2 · Başlık</label>
         <input id="title" type="text" maxlength="120" placeholder="Örn. Gece Yarısı (synthwave düzenleme)">
 
@@ -130,6 +132,7 @@
             <button type="button" id="source-upload" class="btn ghost small">⬆ Beste yükle</button>
             <input id="source-file" type="file" multiple hidden accept="audio/*,.mp3,.wav,.flac,.m4a,.ogg,.opus,.aac,.webm,.aiff">
             <span class="muted small">Birden fazla dosya seçebilirsin · en fazla 40 MB</span>
+            <label class="check credit-check"><input id="credit-upload" type="checkbox" checked> Söz &amp; Beste: Serkan Kağan Çelik ©️ Tüm Hakları Saklıdır</label>
           </div>
           <div id="upload-list" class="upload-list"></div>
           <div id="sources" class="sources"></div>
@@ -165,6 +168,7 @@
         <div class="job-title-row"><span class="source-name"></span><button type="button" class="icon-btn rename" title="Adı düzenle">✎</button></div>
         <span class="source-meta muted small"></span>
       </div>
+      <div class="credit source-credit hidden"></div>
       <audio controls preload="none"></audio>
       <div class="note source-note hidden"></div>
       <div class="source-actions">
@@ -176,6 +180,7 @@
         <textarea class="src-style" rows="2" maxlength="2000" placeholder="Stil: Acoustic Guitar, Strings, …"></textarea>
         <textarea class="src-lyrics" rows="7" maxlength="16000" placeholder="[Verse]&#10;Şarkı sözleri…"></textarea>
         <textarea class="src-note" rows="2" maxlength="2000" placeholder="Not (bestenin altında görünür)"></textarea>
+        <label class="check"><input class="src-credit" type="checkbox"> Söz &amp; Beste: Serkan Kağan Çelik ©️ Tüm Hakları Saklıdır</label>
         <div class="src-editor-actions">
           <button type="button" class="btn primary small src-save">Kaydet</button>
           <span class="src-note muted small"></span>
@@ -199,6 +204,7 @@
               <span class="dur hidden"></span>
             </div>
             <div class="job-style muted small"></div>
+            <div class="credit job-credit hidden"></div>
           </div>
           <div class="job-flags">
             <span class="badge"></span>
@@ -254,6 +260,7 @@
     </div>
     <div class="score-wrap">
       <p id="score-status" class="muted small"></p>
+      <label class="check score-lyrics-check"><input id="score-lyrics" type="checkbox" checked> Sözleri notaların altında göster <span class="muted small">(tahmini yerleşim)</span></label>
       <div id="score-paper" class="score-paper"></div>
     </div>
     <div class="modal-actions">

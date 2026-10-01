@@ -271,6 +271,13 @@ def validate_text(body, name, limit, required=True):
     return value.strip()
 
 
+def validate_flag(body, name, default=None):
+    value = body.get(name, default)
+    if not isinstance(value, bool):
+        raise HttpError(400, f"{name} true/false olmalı")
+    return value
+
+
 def create_upload(body):
     name = validate_text(body, "filename", 200)
     size = body.get("size")
@@ -418,6 +425,8 @@ def update_job_fields(job_id, body):
         fields["title"] = validate_text(body, "title", 120)
     if "note" in body:
         fields["note"] = validate_text(body, "note", 2000, required=False)   # None removes it
+    if "copyright" in body:
+        fields["copyright"] = validate_flag(body, "copyright") or None   # the credit line; False removes it
     if not fields:
         raise HttpError(400, "Değişiklik yok")
     # update_item, not put_item: the GPU agent writes progress to the same item concurrently.
@@ -477,6 +486,7 @@ def public_source(source):
     out["style"] = source.get("style") or ""
     out["lyrics"] = source.get("lyrics") or ""
     out["note"] = source.get("note") or ""
+    out["copyright"] = bool(source.get("copyright"))
     out["url"] = presign_get(source["key"])
     return out
 
@@ -493,6 +503,8 @@ def update_source(source_id, body):
         fields["name"] = validate_text(body, "name", 200)
     if "note" in body:
         fields["note"] = validate_text(body, "note", 2000, required=False)   # None removes it
+    if "copyright" in body:
+        fields["copyright"] = validate_flag(body, "copyright") or None   # the credit line; False removes it
     if not fields:
         raise HttpError(400, "Değişiklik yok")
     sets = {k: v for k, v in fields.items() if v is not None}
@@ -519,6 +531,8 @@ def create_source(folder_id, body):
                    ContentType=head.get("ContentType") or "application/octet-stream", MetadataDirective="REPLACE")
     source = {"id": source_id, "owner": SOURCES, "folder_id": folder_id, "key": key,
               "name": validate_text(body, "name", 200), "size": head["ContentLength"], "created_at": now() * 1000}
+    if validate_flag(body, "copyright", default=False):
+        source["copyright"] = True
     table.put_item(Item=source)
     return public_source(source)
 
