@@ -135,12 +135,16 @@ def start_turbo():
     global turbo_up
     set_state("loading", "Model GPU'ya yükleniyor")
     subprocess.run(["systemctl", "restart", "yue2-serve.service"], check=True)
+    started = time.monotonic()
     deadline = time.time() + 30 * 60
     while time.time() < deadline:
         try:
             response = requests.get(f"{TURBO}/health/ready", timeout=5)
             if response.status_code == 200:
                 turbo_up = True
+                log(f"model load {time.monotonic() - started:.0f}s")
+                table.update_item(Key={"id": WORKER_ID}, UpdateExpression="SET load_seconds = :l",
+                                  ExpressionAttributeValues={":l": int(time.monotonic() - started)})
                 touch()
                 return
             if response.json().get("status") == "failed":
@@ -426,7 +430,7 @@ def work_loop():
             queue.sort(key=lambda item: item.get("kind") == "stems")
             covers_waiting = any(item.get("kind") != "stems" for item in queue)
             for job in queue:
-                if len(active) >= MAX_PARALLEL or any(kinds.get(i) == "stems" for i in active):
+                if len(active) >= MAX_PARALLEL or any(kinds.get(i) == "stems" for i in list(active)):
                     break
                 kind = "stems" if job.get("kind") == "stems" else "cover"
                 if kind == "stems" and (active or covers_waiting):
@@ -442,9 +446,12 @@ def work_loop():
                     kinds[job["id"]] = kind
                     thread.start()
         busy = bool(active)
+        if any(kinds.get(i) == "stems" for i in list(active)):
+            message = "Vokal ayrılıyor"
+        else:
+            message = f"{len(active)} şarkı üretiliyor" if busy else "Hazır, iş bekliyor"
         with state_lock:
-            state.update(state="busy" if busy else "ready",
-                         message=f"{len(active)} şarkı üretiliyor" if busy else "Hazır, iş bekliyor")
+            state.update(state="busy" if busy else "ready", message=message)
         idle = time.time() - last_activity
         if not busy and idle > idle_minutes * 60:
             set_state("stopping", f"{idle_minutes} dk boşta kaldı, GPU kapanıyor")

@@ -559,7 +559,7 @@ def status():
     return {
         "gpu": gpu,
         "worker": {k: worker.get(k) for k in ("state", "message", "heartbeat_at", "last_activity_at",
-                                              "boot_seconds", "instance_type", "requested_type")},
+                                              "boot_seconds", "load_seconds", "instance_type", "requested_type")},
         "queued": len(queue),
         "idle_minutes": IDLE_MINUTES,
         "now": now(),
