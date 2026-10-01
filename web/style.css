@@ -300,7 +300,11 @@ a.menu-item { text-decoration: none; display: block; }
 .score-paper svg { display: block; }
 .score-paper .abcjs-note_playing { fill: #e0245e; }
 .score-modal .modal-actions { flex-wrap: wrap; }
-.score-lyrics-check { margin: 0 0 10px; }
+.score-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 10px; }
+.score-lyrics-check { margin: 0 8px 0 0; }
+.pick-hint { margin: 0 0 10px; color: var(--accent); }
+.score-paper.picking { cursor: crosshair; }
+.score-paper.picking .abcjs-note:hover { fill: var(--accent); }
 
 /* ---- player bar ---- */
 body.has-player { padding-bottom: 88px; }

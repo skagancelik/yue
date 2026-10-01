@@ -260,7 +260,12 @@
     </div>
     <div class="score-wrap">
       <p id="score-status" class="muted small"></p>
-      <label class="check score-lyrics-check"><input id="score-lyrics" type="checkbox" checked> Sözleri notaların altında göster <span class="muted small">(tahmini yerleşim)</span></label>
+      <div class="score-tools">
+        <label class="check score-lyrics-check"><input id="score-lyrics" type="checkbox" checked> Sözleri notaların altında göster <span class="muted small">(tahmini yerleşim)</span></label>
+        <button type="button" id="score-pick" class="btn ghost small hidden">✎ Sözlerin başladığı notayı seç</button>
+        <button type="button" id="score-pick-reset" class="btn ghost small hidden" title="Sözler ilk vokal notadan başlasın">Sıfırla</button>
+      </div>
+      <p id="score-pick-hint" class="pick-hint small hidden">İlk hecenin söylendiği notaya tıkla. Ondan önceki notalar (sözsüz giriş, mırıldanma) boş kalır.</p>
       <div id="score-paper" class="score-paper"></div>
     </div>
     <div class="modal-actions">

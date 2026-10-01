@@ -233,7 +233,7 @@ def public_job(job):
     out = {k: job.get(k) for k in (
         "id", "group", "title", "style", "lyrics", "seed", "status", "stage", "message", "error",
         "created_at", "started_at", "finished_at", "duration", "source_name", "tokens", "variant",
-        "upload_key", "folder_id", "source_id", "stems_status", "stems_message", "stems_error")}
+        "upload_key", "folder_id", "source_id", "stems_status", "stems_message", "stems_error", "lyrics_start")}
     out["liked"] = bool(job.get("liked"))
     out["note"] = job.get("note") or ""
     if job.get("stems_status") == "succeeded":
@@ -425,8 +425,12 @@ def update_job_fields(job_id, body):
         fields["title"] = validate_text(body, "title", 120)
     if "note" in body:
         fields["note"] = validate_text(body, "note", 2000, required=False)   # None removes it
-    if "copyright" in body:
-        fields["copyright"] = validate_flag(body, "copyright") or None   # the credit line; False removes it
+    if "lyrics_start" in body:
+        # The vocal note the lyrics start on in the score view (a wordless hummed intro comes before it).
+        start = body["lyrics_start"]
+        if start is not None and (not isinstance(start, int) or isinstance(start, bool) or not 0 <= start < 100000):
+            raise HttpError(400, "lyrics_start 0 veya pozitif bir tam sayı olmalı")
+        fields["lyrics_start"] = start or None
     if not fields:
         raise HttpError(400, "Değişiklik yok")
     # update_item, not put_item: the GPU agent writes progress to the same item concurrently.
