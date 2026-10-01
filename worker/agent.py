@@ -459,8 +459,7 @@ def main():
     try:
         recover_orphans()
         run_setup()
-        start_turbo()
-        work_loop()
+        work_loop()       # YuE2 is loaded lazily, only when a cover is claimed (a stems-only boot never loads it)
     except Exception as error:
         traceback.print_exc()
         set_state("error", f"Hata: {str(error)[:300]}")
