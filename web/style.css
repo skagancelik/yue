@@ -317,6 +317,10 @@ a.menu-item { text-decoration: none; display: block; }
 .score-edit-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .score-paper.editing { cursor: pointer; }
 .score-paper .abcjs-selected-bar { fill: #1f6feb; }
+.score-paper .abcjs-selected-note { fill: #e0245e; }
+.score-note { display: grid; gap: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
+.score-note-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.score-note-tools .btn { padding: 5px 10px; }
 
 /* ---- player bar ---- */
 body.has-player { padding-bottom: 88px; }

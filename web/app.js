@@ -1107,7 +1107,11 @@ $("score-edit").addEventListener("click", async () => {
       abc = await response.text();
       origin = "bestenin kaydedilmiş düzeltmesi";
     }
-    score.edit = { model: ScoreModel.parse(abc), history: [], sel: null, anchor: null, ranges: [], dirty: false, origin };
+    score.edit = { model: ScoreModel.parse(abc), history: [], sel: null, anchor: null, note: null, ranges: [], dirty: false, origin };
+    const unit = ScoreModel.unitDenominator(score.edit.model);
+    // Lengthen/shorten steps a musician thinks in, as L: units (only the ones the grid can hold).
+    $("score-step").replaceChildren(...[[16, "1/16"], [8, "1/8"], [4, "1/4"]]
+      .filter(([den]) => unit % den === 0).map(([den, name]) => new Option(`adım ${name}`, String(unit / den))));
   } catch (error) {
     $("score-status").textContent = `Bu nota düzenlenemiyor: ${error.message}`;
     return;
@@ -1120,50 +1124,187 @@ function drawEdit() {
   const edit = score.edit;
   const { text, ranges } = ScoreModel.serialize(edit.model, { annotate: true });
   edit.ranges = ranges;
+  // Redrawing empties the paper for a moment; keep its height and the scroll where the user works.
+  const wrap = document.querySelector(".score-wrap");
+  const paper = $("score-paper");
+  const top = wrap.scrollTop;
+  paper.style.minHeight = paper.offsetHeight + "px";
   score.tune = ABCJS.renderAbc("score-paper", text, {
     responsive: "resize", add_classes: true, oneSvgPerLine: true, clickListener: editClick,
     paddingleft: 16, paddingright: 16, paddingtop: 12, paddingbottom: 12,
     staffwidth: 900, wrap: { minSpacing: 1.8, maxSpacing: 2.7, preferredMeasuresPerLine: 4 },
   })[0];
+  paper.style.minHeight = "";
+  wrap.scrollTop = top;
   markSelection();
   renderSections();
   renderCompare();
+  renderNotePanel();
   const sel = edit.sel;
   $("score-sel").textContent = sel
     ? `Seçili: ${sel[0] === sel[1] ? `ölçü ${sel[0] + 1}` : `ölçü ${sel[0] + 1}–${sel[1] + 1}`}`
-    : "Bir ölçüye tıkla, Shift ile aralık seç ya da yukarıdan bir bölüm seç.";
+    : "Bir notaya tıkla, Shift ile ölçü aralığı seç ya da yukarıdan bir bölüm seç.";
   $("score-set-section").disabled = $("score-swap").disabled = !sel;
   $("score-undo").disabled = !edit.history.length;
   $("score-save").disabled = !edit.dirty;
   $("score-status").textContent = `Düzenleniyor: ${edit.origin}.` + (edit.dirty ? " Kaydedilmemiş değişiklik var." : "");
 }
 
-// Selected bars are coloured note by note (abcjs knows each drawn element's place in the text).
+// The selected note (red) and bars (blue) are coloured element by element: abcjs knows where
+// each drawn element starts in the ABC text, and ranges say which bar and voice that text is.
 function markSelection() {
-  const sel = score.edit.sel;
-  if (!sel || !score.tune) return;
-  const spans = score.edit.ranges.filter((r) => r.bar >= sel[0] && r.bar <= sel[1]);
+  const edit = score.edit;
+  if (!edit.sel || !score.tune) return;
+  const spans = edit.ranges.filter((r) => r.bar >= edit.sel[0] && r.bar <= edit.sel[1]);
+  const picked = selectedNote();
+  const noteSpan = picked && edit.ranges.find((r) => r.bar === edit.note.bar && r.voice === edit.note.voice);
   for (const line of score.tune.lines || []) for (const staff of line.staff || []) for (const voice of staff.voices || []) {
     for (const element of voice) {
-      if (element.startChar == null || !spans.some((r) => element.startChar >= r.from && element.startChar < r.to)) continue;
-      for (const node of (element.abselem && element.abselem.elemset) || []) node.classList.add("abcjs-selected-bar");
+      const at = element.startChar;
+      if (at == null || !spans.some((r) => at >= r.from && at < r.to)) continue;
+      const isNote = noteSpan && at >= noteSpan.start + picked.from && at < noteSpan.start + picked.to;
+      for (const node of (element.abselem && element.abselem.elemset) || []) node.classList.add(isNote ? "abcjs-selected-note" : "abcjs-selected-bar");
     }
   }
 }
 
+// The logical note under a text position of the drawn score: { voice, bar, note }.
+function noteAt(position) {
+  const range = score.edit.ranges.find((r) => position >= r.from && position < r.to);
+  if (!range) return null;
+  const info = ScoreModel.voiceNotes(score.edit.model, range.voice)[range.bar];
+  const offset = Math.max(0, position - range.start);
+  const index = info.notes.findIndex((n) => offset >= n.from && offset < n.to);
+  return { voice: range.voice, bar: range.bar, note: index };
+}
+
+function selectedNote() {
+  const pick = score.edit && score.edit.note;
+  if (!pick || pick.note < 0) return null;
+  return ScoreModel.voiceNotes(score.edit.model, pick.voice)[pick.bar].notes[pick.note] || null;
+}
+
 function editClick(element, tuneNumber, classes, analysis, drag, mouseEvent) {
   if (!score.edit || !element || element.startChar == null) return;
-  const hit = score.edit.ranges.find((r) => element.startChar >= r.from && element.startChar < r.to);
+  const hit = noteAt(element.startChar);
   if (!hit) return;
   const edit = score.edit;
   if (mouseEvent && mouseEvent.shiftKey && edit.anchor != null) {
     edit.sel = [Math.min(edit.anchor, hit.bar), Math.max(edit.anchor, hit.bar)];
+    edit.note = null;
   } else {
     edit.anchor = hit.bar;
     edit.sel = [hit.bar, hit.bar];
+    edit.note = hit.note >= 0 ? hit : null;
   }
+  $("score-note-msg").textContent = "";
   drawEdit();
+  const note = selectedNote();
+  if (note && !note.rest) playPitch(note.midi);
 }
+
+const DURATION_NAMES = { "1/16": "onaltılık", "1/8": "sekizlik", "3/16": "noktalı sekizlik", "1/4": "dörtlük",
+  "3/8": "noktalı dörtlük", "1/2": "ikilik", "3/4": "noktalı ikilik", "1/1": "birlik" };
+
+function durationText(units) {
+  const whole = ScoreModel.unitDenominator(score.edit.model);
+  const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+  const g = gcd(units, whole);
+  const fraction = `${units / g}/${whole / g}`;
+  return DURATION_NAMES[fraction] ? `${DURATION_NAMES[fraction]} (${fraction})` : fraction;
+}
+
+function renderNotePanel() {
+  const pick = score.edit.note;
+  const note = selectedNote();
+  // The panel always keeps its place, so picking a note does not push the score down under the cursor.
+  $("score-note").classList.remove("hidden");
+  document.querySelector(".score-note-tools").style.visibility = note ? "" : "hidden";
+  if (!note) { $("score-note-info").textContent = "Perdesini ya da süresini değiştirmek için bir notaya tıkla."; return; }
+  const where = `${pick.voice === "vocal" ? "Vokal" : "Enstrüman"}, ölçü ${pick.bar + 1}`;
+  const tied = note.tieOut || note.contIn ? " · ölçü çizgisinin üzerinden bağlı" : "";
+  $("score-note-info").textContent = `Seçili: ${note.rest ? "sus" : ScoreModel.pitchName(note)} · ${durationText(note.dur)} · ${where}${tied}`;
+  for (const button of document.querySelectorAll("#score-note [data-note]")) {
+    const op = button.dataset.note;
+    button.classList.toggle("hidden", (op === "note" && !note.rest) || (op === "rest" && note.rest)
+      || (note.rest && ["up", "down", "octave-up", "octave-down"].includes(op)));
+  }
+}
+
+// A short piano tone for the note just picked or changed; silence is fine if audio is blocked.
+async function playPitch(midi) {
+  try {
+    score.audio = score.audio || new (window.AudioContext || window.webkitAudioContext)();
+    await score.audio.resume();
+    if (ABCJS.synth.registerAudioContext) ABCJS.synth.registerAudioContext(score.audio);
+    await ABCJS.synth.playEvent([{ pitch: midi, volume: 90, start: 0, duration: 0.6, instrument: 0, gap: 0 }], [], 1000);
+  } catch (error) { console.warn(error); }
+}
+
+function moveNote(direction) {
+  const edit = score.edit;
+  const pick = edit.note;
+  if (!pick) return;
+  const all = ScoreModel.voiceNotes(edit.model, pick.voice);
+  let { bar, note } = pick;
+  note += direction;
+  while (bar >= 0 && bar < all.length && (note < 0 || note >= all[bar].notes.length)) {
+    bar += direction;
+    if (bar < 0 || bar >= all.length) return;
+    note = direction > 0 ? 0 : all[bar].notes.length - 1;
+  }
+  edit.note = { voice: pick.voice, bar, note };
+  edit.sel = [bar, bar];
+  edit.anchor = bar;
+  $("score-note-msg").textContent = "";
+  drawEdit();
+  const picked = selectedNote();
+  if (picked && !picked.rest) playPitch(picked.midi);
+}
+
+const NOTE_OPS = {
+  up: ["pitch", { semitones: 1 }], down: ["pitch", { semitones: -1 }],
+  "octave-up": ["pitch", { semitones: 12 }], "octave-down": ["pitch", { semitones: -12 }],
+  longer: ["longer"], shorter: ["shorter"], rest: ["rest"], note: ["note"], split: ["split"], merge: ["merge"],
+};
+
+function noteAction(name) {
+  const edit = score.edit;
+  if (!edit || !edit.note) return;
+  if (name === "prev" || name === "next") { moveNote(name === "next" ? 1 : -1); return; }
+  const [op, arg] = NOTE_OPS[name];
+  try {
+    const result = ScoreModel.editNote(edit.model, edit.note.voice, edit.note, op, { ...arg, step: Number($("score-step").value) || 1 });
+    edit.history.push({ model: edit.model, sel: edit.sel, note: edit.note });
+    edit.model = result.model;
+    edit.note = { voice: edit.note.voice, ...result.sel };
+    edit.sel = [result.sel.bar, result.sel.bar];
+    edit.dirty = true;
+    $("score-note-msg").textContent = "";
+    drawEdit();
+    const note = selectedNote();
+    if (note && !note.rest && (op === "pitch" || op === "note")) playPitch(note.midi);
+  } catch (error) {
+    $("score-note-msg").textContent = error.message;
+  }
+}
+
+for (const button of document.querySelectorAll("#score-note [data-note]")) {
+  button.addEventListener("click", () => noteAction(button.dataset.note));
+}
+
+// Keys while a note is selected: arrows move and transpose, +/− change its length.
+$("score-modal").addEventListener("keydown", (event) => {
+  if (!score.edit || !score.edit.note || /^(INPUT|SELECT|TEXTAREA)$/.test(event.target.tagName)) return;
+  const name = {
+    ArrowUp: event.shiftKey ? "octave-up" : "up", ArrowDown: event.shiftKey ? "octave-down" : "down",
+    ArrowLeft: "prev", ArrowRight: "next", "+": "longer", "=": "longer", "-": "shorter",
+    Delete: "rest", Backspace: "rest", n: "note", N: "note",
+  }[event.key];
+  if (!name) return;
+  event.preventDefault();
+  noteAction(name);
+});
 
 function renderSections() {
   const edit = score.edit;
@@ -1221,8 +1362,9 @@ function renderCompare() {
 
 function applyEdit(model, sel) {
   const edit = score.edit;
-  edit.history.push({ model: edit.model, sel: edit.sel });
+  edit.history.push({ model: edit.model, sel: edit.sel, note: edit.note });
   edit.model = model;
+  edit.note = null;   // after a voice swap the picked note may sit in the other voice
   if (sel) edit.sel = sel;
   edit.dirty = true;
   drawEdit();
@@ -1249,6 +1391,7 @@ $("score-undo").addEventListener("click", () => {
   if (!last) return;
   edit.model = last.model;
   edit.sel = last.sel;
+  edit.note = last.note || null;
   edit.dirty = edit.history.length > 0;
   drawEdit();
 });

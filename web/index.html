@@ -267,7 +267,7 @@
       </div>
       <p id="score-pick-hint" class="pick-hint small hidden">İlk hecenin söylendiği notaya tıkla. Ondan önceki notalar (sözsüz giriş, mırıldanma) boş kalır.</p>
       <div id="score-editor" class="score-editor hidden">
-        <p class="muted small">Bölüm adlarını ve hangi notaların <b>söylendiğini</b> (Vocal) ya da <b>enstrümanla çalındığını</b> (Ins) düzelt. Kaydedince bu besteden yapılan yeni düzenlemeler bu notayla üretilir; melodi kayıttan yeniden çıkarılmaz.</p>
+        <p class="muted small">Bölüm adlarını, hangi notaların <b>söylendiğini</b> (Vocal) ya da <b>enstrümanla çalındığını</b> (Ins) ve notaların perde ve sürelerini düzelt. Bir notaya tıkla; Shift ile tıklayınca ölçü aralığı seçilir. Kaydedince bu besteden yapılan yeni düzenlemeler bu notayla üretilir; melodi kayıttan yeniden çıkarılmaz.</p>
         <div id="score-sections" class="score-sections"></div>
         <div id="score-compare" class="score-compare small"></div>
         <div class="score-edit-tools">
@@ -286,6 +286,25 @@
           <button type="button" id="score-set-section" class="btn ghost small" disabled>Seçimi bu bölüm yap</button>
           <button type="button" id="score-swap" class="btn ghost small" disabled title="Seçili ölçülerde söylenen notalar enstrümana, enstrümanınkiler vokale geçer">🎤⇄🎹 Vokal ⇄ Enstrüman</button>
           <button type="button" id="score-undo" class="btn ghost small" disabled>↶ Geri al</button>
+        </div>
+        <div id="score-note" class="score-note hidden">
+          <span id="score-note-info" class="small"></span>
+          <div class="score-note-tools">
+            <button type="button" class="btn ghost small" data-note="prev" title="Önceki nota (←)">◀</button>
+            <button type="button" class="btn ghost small" data-note="next" title="Sonraki nota (→)">▶</button>
+            <button type="button" class="btn ghost small" data-note="up" title="Yarım ses tiz (↑)">♯ ↑</button>
+            <button type="button" class="btn ghost small" data-note="down" title="Yarım ses pes (↓)">♭ ↓</button>
+            <button type="button" class="btn ghost small" data-note="octave-up" title="Bir oktav tiz (Shift+↑)">Oktav ↑</button>
+            <button type="button" class="btn ghost small" data-note="octave-down" title="Bir oktav pes (Shift+↓)">Oktav ↓</button>
+            <button type="button" class="btn ghost small" data-note="longer" title="Uzat; süreyi sonraki nota ya da sustan alır (+)">Uzat +</button>
+            <button type="button" class="btn ghost small" data-note="shorter" title="Kısalt; artan süre susa döner (−)">Kısalt −</button>
+            <select id="score-step" class="small-select" aria-label="Uzatma/kısaltma adımı" title="Uzat/Kısalt adımı"></select>
+            <button type="button" class="btn ghost small" data-note="rest" title="Notayı susa çevir (Delete)">Sus yap</button>
+            <button type="button" class="btn ghost small" data-note="note" title="Susu notaya çevir (N)">Notaya çevir</button>
+            <button type="button" class="btn ghost small" data-note="split" title="İki eşit notaya böl">Böl</button>
+            <button type="button" class="btn ghost small" data-note="merge" title="Sonraki nota ya da susla birleştir">Sonrakiyle birleştir</button>
+          </div>
+          <span id="score-note-msg" class="muted small"></span>
         </div>
       </div>
       <div id="score-paper" class="score-paper"></div>
