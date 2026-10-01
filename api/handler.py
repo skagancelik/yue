@@ -218,14 +218,14 @@ def presign_get(key, filename=None):
         # S3 only accepts ISO-8859-1 header values, so Turkish letters (ı, ş, ğ) go in the
         # RFC 5987 filename* parameter, with an ASCII fallback for old clients.
         ascii_name = unicodedata.normalize("NFKD", filename.replace("ı", "i").replace("İ", "I"))
-        ascii_name = ascii_name.encode("ascii", "ignore").decode() or "cover"
+        ascii_name = ascii_name.encode("ascii", "ignore").decode() or "duzenleme"
         params["ResponseContentDisposition"] = (
             f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(filename)}')
     return s3.generate_presigned_url("get_object", Params=params, ExpiresIn=6 * 3600)
 
 
 def safe_filename(title, ext):
-    base = re.sub(r"[^\w\- ]+", "", title or "cover", flags=re.UNICODE).strip() or "cover"
+    base = re.sub(r"[^\w\- ]+", "", title or "duzenleme", flags=re.UNICODE).strip() or "duzenleme"
     return f"{base[:60]}.{ext}"
 
 
@@ -305,7 +305,7 @@ def create_jobs(body):
     if folder_id:
         get_folder(folder_id)
     if source_id:
-        source = get_item(source_id, SOURCES, "Kaynak şarkı bulunamadı")
+        source = get_item(source_id, SOURCES, "Beste bulunamadı")
         upload_key, body["source_name"] = source["key"], source["name"]
     else:
         upload_key = validate_text(body, "upload_key", 200)
@@ -314,7 +314,7 @@ def create_jobs(body):
     check_upload_size(upload_key)
     style = validate_text(body, "style", 2000)
     lyrics = validate_text(body, "lyrics", 16000)
-    title = validate_text(body, "title", 120, required=False) or "Adsız cover"
+    title = validate_text(body, "title", 120, required=False) or "Adsız düzenleme"
     source_name = validate_text(body, "source_name", 200, required=False)
     auto_stems = body.get("stems", True)
     if not isinstance(auto_stems, bool):
@@ -386,7 +386,7 @@ def request_stems(job_id):
     """Queue BS-RoFormer vocal/instrumental separation of a finished cover."""
     job = get_job(job_id)
     if job.get("status") != "succeeded" or not job.get("flac_key"):
-        raise HttpError(409, "Önce şarkının üretimi tamamlanmalı")
+        raise HttpError(409, "Önce düzenleme tamamlanmalı")
     if job.get("stems_status") in ("queued", "running", "succeeded"):
         return {"job": public_job(job), "gpu": describe_gpu()["state"]}
     created = now()
@@ -411,7 +411,7 @@ def update_job_fields(job_id, body):
         folder_id = body["folder_id"]
         if folder_id is not None:
             if not isinstance(folder_id, str):
-                raise HttpError(400, "Geçersiz klasör")
+                raise HttpError(400, "Geçersiz şarkı")
             get_folder(folder_id)
         fields["folder_id"] = folder_id
     if "title" in body:
@@ -435,7 +435,7 @@ def update_job_fields(job_id, body):
 # ---------------------------------------------------------------- folders & sources
 
 def get_folder(folder_id):
-    return get_item(folder_id, FOLDERS, "Klasör bulunamadı")
+    return get_item(folder_id, FOLDERS, "Şarkı bulunamadı")
 
 
 def public_folder(folder):
@@ -460,10 +460,10 @@ def delete_folder(folder_id):
     get_folder(folder_id)
     jobs = all_items(OWNER)
     if any(job.get("folder_id") == folder_id for job in jobs):
-        raise HttpError(409, "Klasörde üretimler var; önce onları silin veya taşıyın")
+        raise HttpError(409, "Bu şarkıda düzenlemeler var; önce onları silin veya taşıyın")
     folder_sources = {s["id"] for s in all_items(SOURCES) if s.get("folder_id") == folder_id}
     if any(job.get("source_id") in folder_sources and job.get("status") in ("queued", "running") for job in jobs):
-        raise HttpError(409, "Klasördeki bir kaynağı kullanan üretim sürüyor; bitmesini bekleyin")
+        raise HttpError(409, "Bu şarkının bir bestesini kullanan düzenleme sürüyor; bitmesini bekleyin")
     for source in all_items(SOURCES):
         if source.get("folder_id") == folder_id:
             s3.delete_object(Bucket=BUCKET, Key=source["key"])
@@ -483,7 +483,7 @@ def public_source(source):
 
 def update_source(source_id, body):
     """Save the style and lyrics that belong to a source song, so a new cover can start from them."""
-    get_item(source_id, SOURCES, "Kaynak şarkı bulunamadı")
+    get_item(source_id, SOURCES, "Beste bulunamadı")
     fields = {}
     if "style" in body:
         fields["style"] = (validate_text(body, "style", 2000, required=False) or "")
@@ -503,7 +503,7 @@ def update_source(source_id, body):
     kwargs = {"ExpressionAttributeValues": {f":{k}": v for k, v in sets.items()}} if sets else {}
     table.update_item(Key={"id": source_id}, UpdateExpression=expression.strip(),
                       ExpressionAttributeNames={f"#{k}": k for k in fields}, **kwargs)
-    return public_source(get_item(source_id, SOURCES, "Kaynak şarkı bulunamadı"))
+    return public_source(get_item(source_id, SOURCES, "Beste bulunamadı"))
 
 
 def create_source(folder_id, body):
@@ -524,9 +524,9 @@ def create_source(folder_id, body):
 
 
 def delete_source(source_id):
-    source = get_item(source_id, SOURCES, "Kaynak şarkı bulunamadı")
+    source = get_item(source_id, SOURCES, "Beste bulunamadı")
     if any(job.get("source_id") == source_id and job.get("status") in ("queued", "running") for job in all_items(OWNER)):
-        raise HttpError(409, "Bu kaynağı kullanan bir üretim sürüyor; bitmesini bekleyin veya iptal edin")
+        raise HttpError(409, "Bu besteyi kullanan bir düzenleme sürüyor; bitmesini bekleyin veya iptal edin")
     s3.delete_object(Bucket=BUCKET, Key=source["key"])
     table.delete_item(Key={"id": source_id})
     return {"deleted": source_id}

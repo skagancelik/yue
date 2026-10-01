@@ -27,7 +27,7 @@
     <header class="topbar">
       <div class="brand"><img src="serkanify-logo.svg" alt="serkanify" width="119" height="32"><span class="brand-studio">Studio</span></div>
       <nav class="topnav" aria-label="Bölümler">
-        <button type="button" class="topnav-item" data-top="folders">📁 Klasörler</button>
+        <button type="button" class="topnav-item" data-top="folders">📁 Şarkılarım</button>
         <button type="button" class="topnav-item" data-top="liked"><span class="heart">♥</span> Beğendiklerim<span id="liked-count" class="nav-count"></span></button>
       </nav>
       <div class="gpu">
@@ -39,24 +39,24 @@
     <div class="shell" id="shell">
     <aside class="sidebar">
       <div class="side-head">
-        <span>Klasörler</span>
-        <button type="button" id="folder-new" class="link small" title="Yeni klasör">+ Yeni</button>
+        <span>Şarkılarım</span>
+        <button type="button" id="folder-new" class="link small" title="Yeni şarkı">+ Yeni</button>
       </div>
       <nav id="folder-list" class="folder-list"></nav>
     </aside>
 
     <main class="layout">
       <section id="create-panel" class="panel create">
-        <h2>Cover oluştur</h2>
-        <p class="muted small folder-hint">Klasör: <b id="create-folder-name"></b></p>
+        <h2>Düzenleme yap</h2>
+        <p class="muted small folder-hint">Şarkı: <b id="create-folder-name"></b></p>
 
-        <label class="field-label">1 · Kaynak şarkı</label>
+        <label class="field-label">1 · Beste</label>
         <div id="drop" class="drop">
           <input id="file" type="file" accept="audio/*,.mp3,.wav,.flac,.m4a,.ogg,.opus,.aac,.webm,.aiff">
           <div id="drop-empty">
             <div class="drop-icon">⬆</div>
             <div><b>Ses dosyası sürükle</b> veya tıkla</div>
-            <div class="muted small">MP3, WAV, FLAC, M4A… en fazla 40 MB. Melodi bu kayıttan çıkarılır; dosya klasörde saklanır.</div>
+            <div class="muted small">MP3, WAV, FLAC, M4A… en fazla 40 MB. Melodi bu besteden çıkarılır; dosya şarkının altında saklanır.</div>
           </div>
           <div id="drop-file" class="hidden">
             <div class="file-row"><span id="file-name"></span><button type="button" id="file-clear" class="link">değiştir</button></div>
@@ -66,7 +66,7 @@
         </div>
 
         <label class="field-label" for="title">2 · Başlık</label>
-        <input id="title" type="text" maxlength="120" placeholder="Örn. Gece Yarısı (synthwave cover)">
+        <input id="title" type="text" maxlength="120" placeholder="Örn. Gece Yarısı (synthwave düzenleme)">
 
         <label class="field-label" for="style">3 · Stil</label>
         <div class="style-sets">
@@ -88,22 +88,22 @@
         </div>
         <textarea id="lyrics" rows="12" maxlength="16000" placeholder="[Verse]&#10;İlk dize&#10;İkinci dize&#10;&#10;[Chorus]&#10;Nakarat…"></textarea>
         <div class="hint muted small">İpucu: Bölüm sırası ve hece sayısı orijinal melodiye ne kadar yakınsa sonuç o kadar iyi olur.</div>
-        <button type="button" id="source-text-save" class="btn ghost small hidden">Stil ve sözü kaynak şarkıya kaydet</button>
+        <button type="button" id="source-text-save" class="btn ghost small hidden">Stil ve sözü besteye kaydet</button>
 
         <details class="advanced">
           <summary>Gelişmiş</summary>
-          <label class="check"><input id="auto-stems" type="checkbox" checked> Altyapı ve vokalı da ayır <span class="muted small">(şarkı başına ~3 dk ek GPU)</span></label>
+          <label class="check"><input id="auto-stems" type="checkbox" checked> Altyapı ve vokalı da ayır <span class="muted small">(düzenleme başına ~3 dk ek GPU)</span></label>
           <div class="row">
             <label>Varyasyon
-              <select id="variants"><option value="1">1 şarkı</option><option value="2">2 şarkı (farklı seed)</option></select>
+              <select id="variants"><option value="1">1 düzenleme</option><option value="2">2 düzenleme (farklı seed)</option></select>
             </label>
             <label>Seed <input id="seed" type="number" min="0" max="2147483647" placeholder="rastgele"></label>
           </div>
         </details>
 
-        <label class="check"><input id="stop-gpu" type="checkbox" checked> Üretim sonunda GPU'yu durdur <span class="muted small">(vokal ayrımı ve sıradaki işler bitince hemen kapanır, boşta beklemez)</span></label>
+        <label class="check"><input id="stop-gpu" type="checkbox" checked> Düzenleme sonunda GPU'yu durdur <span class="muted small">(vokal ayrımı ve sıradaki işler bitince hemen kapanır, boşta beklemez)</span></label>
 
-        <button id="create" class="btn primary wide" disabled>🎤 Cover oluştur</button>
+        <button id="create" class="btn primary wide" disabled>🎤 Düzenleme yap</button>
         <p id="create-note" class="muted small center"></p>
         <p id="create-error" class="error center"></p>
       </section>
@@ -112,44 +112,44 @@
         <div class="lib-head">
           <h2 id="view-title">Kütüphane</h2>
           <div class="lib-actions menu-wrap hidden" id="folder-menu">
-            <button type="button" id="folder-menu-btn" class="btn ghost small menu-btn" aria-haspopup="true" aria-expanded="false" title="Klasör işlemleri">⋯</button>
+            <button type="button" id="folder-menu-btn" class="btn ghost small menu-btn" aria-haspopup="true" aria-expanded="false" title="Şarkı işlemleri">⋯</button>
             <div class="menu hidden" id="folder-menu-list" role="menu">
               <button type="button" id="folder-rename" class="menu-item" role="menuitem">Yeniden adlandır</button>
-              <button type="button" id="folder-delete" class="menu-item danger" role="menuitem">Klasörü sil</button>
+              <button type="button" id="folder-delete" class="menu-item danger" role="menuitem">Şarkıyı sil</button>
             </div>
           </div>
         </div>
 
         <div id="subtabs" class="subtabs hidden" role="tablist">
-          <button type="button" class="subtab" role="tab" data-tab="sources">Kaynak şarkılar <span id="sources-count" class="tab-count"></span></button>
-          <button type="button" class="subtab" role="tab" data-tab="jobs">Üretimler <span id="jobs-count" class="tab-count"></span></button>
+          <button type="button" class="subtab" role="tab" data-tab="sources">Yüklenen Besteler <span id="sources-count" class="tab-count"></span></button>
+          <button type="button" class="subtab" role="tab" data-tab="jobs">Düzenlemeler <span id="jobs-count" class="tab-count"></span></button>
         </div>
 
         <div id="sources-block" class="block hidden">
           <div class="block-head">
-            <button type="button" id="source-upload" class="btn ghost small">⬆ Kaynak şarkı yükle</button>
+            <button type="button" id="source-upload" class="btn ghost small">⬆ Beste yükle</button>
             <input id="source-file" type="file" multiple hidden accept="audio/*,.mp3,.wav,.flac,.m4a,.ogg,.opus,.aac,.webm,.aiff">
             <span class="muted small">Birden fazla dosya seçebilirsin · en fazla 40 MB</span>
           </div>
           <div id="upload-list" class="upload-list"></div>
           <div id="sources" class="sources"></div>
-          <p id="sources-empty" class="muted small hidden">Bu klasöre henüz kaynak şarkı yüklenmedi. Yukarıdaki düğmeyle veya soldaki alana bir kayıt bırak.</p>
+          <p id="sources-empty" class="muted small hidden">Bu şarkıya henüz beste yüklenmedi. Yukarıdaki düğmeyle veya soldaki alana bir kayıt bırak.</p>
         </div>
 
         <div id="jobs-block" class="block">
-          <div id="jobs-head" class="block-head"><h3 id="jobs-title">Beğenilen şarkılar</h3><span id="lib-count" class="muted small"></span></div>
+          <div id="jobs-head" class="block-head"><h3 id="jobs-title">Beğenilen düzenlemeler</h3><span id="lib-count" class="muted small"></span></div>
           <div id="jobs" class="jobs"></div>
           <div id="empty" class="empty hidden">
             <div class="drop-icon">🎧</div>
-            <p id="empty-text">Henüz üretim yok.</p>
+            <p id="empty-text">Henüz düzenleme yok.</p>
           </div>
         </div>
       </section>
 
       <section id="no-folder" class="panel onboarding hidden">
         <div class="drop-icon">📁</div>
-        <h2>İlk klasörünü oluştur</h2>
-        <p class="muted">Her şarkı için bir klasör aç; kaynak kayıtların ve üretimlerin orada toplanır.</p>
+        <h2>İlk şarkını oluştur</h2>
+        <p class="muted">Her şarkın için burada bir yer aç; yüklediğin besteler ve düzenlemeler orada toplanır.</p>
         <form id="first-folder" class="inline-form">
           <input id="first-folder-name" type="text" maxlength="80" placeholder="Örn. Gitmek Zor" required>
           <button class="btn primary" type="submit">Oluştur</button>
@@ -168,14 +168,14 @@
       <audio controls preload="none"></audio>
       <div class="note source-note hidden"></div>
       <div class="source-actions">
-        <button type="button" class="btn ghost small use">Bununla üret</button>
+        <button type="button" class="btn ghost small use">Bununla düzenle</button>
         <button type="button" class="btn ghost small edit-text">Stil, söz, not</button>
         <button type="button" class="btn ghost small danger remove">Sil</button>
       </div>
       <div class="src-editor">
         <textarea class="src-style" rows="2" maxlength="2000" placeholder="Stil: Acoustic Guitar, Strings, …"></textarea>
         <textarea class="src-lyrics" rows="7" maxlength="16000" placeholder="[Verse]&#10;Şarkı sözleri…"></textarea>
-        <textarea class="src-note" rows="2" maxlength="2000" placeholder="Not (şarkının altında görünür)"></textarea>
+        <textarea class="src-note" rows="2" maxlength="2000" placeholder="Not (bestenin altında görünür)"></textarea>
         <div class="src-editor-actions">
           <button type="button" class="btn primary small src-save">Kaydet</button>
           <span class="src-note muted small"></span>

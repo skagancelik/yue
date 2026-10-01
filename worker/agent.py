@@ -263,7 +263,7 @@ def process(job):
             error = status.get("error") or {}
             message = error.get("message") or ""
             if not message or message.startswith("Inference failed"):
-                message = ("Model bu kayıttan şarkı üretemedi (çoğunlukla melodi çıkarılamadığında olur). "
+                message = ("Model bu besteden düzenleme üretemedi (çoğunlukla melodi çıkarılamadığında olur). "
                            "Başka bir kayıt veya farklı bir kesit deneyin.")
             raise RuntimeError(message)
 
@@ -455,7 +455,7 @@ def work_loop():
         if any(kinds.get(i) == "stems" for i in list(active)):
             message = "Vokal ayrılıyor"
         else:
-            message = f"{len(active)} şarkı üretiliyor" if busy else "Hazır, iş bekliyor"
+            message = f"{len(active)} düzenleme yapılıyor" if busy else "Hazır, iş bekliyor"
         with state_lock:
             state.update(state="busy" if busy else "ready", message=message)
         idle = time.time() - last_activity
