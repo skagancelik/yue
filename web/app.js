@@ -869,7 +869,7 @@ function loadAbcjs() {
   return abcjsLoading;
 }
 
-const score = { job: null, abc: "", tune: null, synth: null, timer: null, audio: null, words: null, layout: null, placing: false, placeNote: null };
+const score = { job: null, abc: "", tune: null, synth: null, timer: null, audio: null, words: null, layout: null, placing: false, placeNote: null, moving: null };
 
 // ---- lyrics under the notes
 // An estimate for looking and checking only (YuE2 lays the syllables out itself, see
@@ -913,76 +913,76 @@ function drawScore() {
     : "Besteden çıkarılan melodi (YuE2'ye verilen nota). Akor içermez.";
   if (!total) status += " Bu düzenlemede söz yok.";
   else if (withLyrics) status += ` Sözler tahmini yerleştirildi: ${placed}/${total} hece bir notaya denk geldi.`;
+  const short = score.words.sections.filter(missingSyllables);
+  if (withLyrics && short.length && !score.placing) {
+    status += ` ⚠ ${short.map((section) => section.tag || "söz").join(", ")}: notaya sığmayan hece var (Heceleri yerleştir'de bölüm bölüm görünür).`;
+  }
   $("score-status").textContent = status;
   $("score-lyrics").disabled = !total;
   $("score-place").classList.toggle("hidden", !withLyrics);
-  $("score-place-reset").classList.toggle("hidden", !withLyrics || LyricsLayout.isEmpty(score.layout));
-  renderSyllableCheck(withLyrics);
   markPlacement();
   renderPlacePanel();
 }
 $("score-lyrics").addEventListener("change", () => { if (score.words) drawScore(); });
 
-// Syllables against notes, section by section: a syllable that finds no note means the lyrics
-// have more syllables than the melody there, which is worth fixing in the lyrics (YuE2 reads those).
-function renderSyllableCheck(show) {
-  const sections = score.words.sections;
-  $("score-syll").classList.toggle("hidden", !show || !sections.length);
-  if (!show) return;
-  const head = document.createElement("div");
-  head.className = "muted";
-  head.textContent = "Hece kontrolü (yalnızca görüntü; YuE2 heceleri kendisi dağıtır, sözdeki hece sayısı ise modele gider):";
-  $("score-syll").replaceChildren(head, ...sections.map((section, k) => {
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "syll-row";
-    const where = section.start < score.words.count ? `başlangıç ölçü ${section.bar + 1}` : "nota kalmadı";
-    const missing = section.count - section.placed;
-    const verdict = missing ? `⚠ ${missing} hece notaya sığmadı` : section.spare ? `${section.spare} nota hecesiz kaldı` : "✓";
-    row.classList.toggle("warn", missing > 0);
-    row.textContent = `[${section.tag || "söz"}] «${section.first}…» · ${where}${section.auto ? "" : " 📌"} · ${section.count} hece · ${verdict}`;
-    row.title = "Bu bölümün ilk notasını seç";
-    row.onclick = () => {
-      if (section.start >= score.words.count) return;
-      if (!score.placing) setPlacing(true);
-      pickPlaceNote(section.start, k);
-    };
-    return row;
-  }));
-}
-
+// Placing mode: one compact panel. Section chips show each lyric section's syllables against its
+// notes (a syllable that finds no note is worth fixing in the lyrics, which YuE2 does read);
+// picking a chip and then a note moves where that section starts. A picked note can hold the
+// syllable before (melisma) or carry two syllables.
 function setPlacing(on) {
   score.placing = on;
-  if (!on) score.placeNote = null;
+  score.placeNote = null;
+  score.moving = null;
   $("score-paper").classList.toggle("picking", on);
-  $("score-place").textContent = on ? "✓ Yerleştirmeyi bitir" : "✎ Heceleri yerleştir";
+  $("score-place").textContent = on ? "✓ Bitti" : "✎ Heceleri yerleştir";
   $("score-place-panel").classList.toggle("hidden", !on);
-  $("score-place-help").classList.toggle("hidden", !on);
   $("score-place-msg").textContent = "";
 }
 $("score-place").addEventListener("click", () => { setPlacing(!score.placing); drawScore(); });
 
 $("score-place-reset").addEventListener("click", () => {
   if (!confirm("Bütün bölümler yeniden otomatik yerleşsin, uzatma ve iki hece işaretleri silinsin mi?")) return;
+  score.moving = null;
   applyLayout(LyricsLayout.normalize(null));
 });
+
+const missingSyllables = (section) => section.count - section.placed;
+
+function renderSectionChips() {
+  $("score-place-sections").replaceChildren(...score.words.sections.map((section, k) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    const missing = missingSyllables(section);
+    chip.className = "section-chip" + (missing ? " warn" : "") + (score.moving === k ? " on" : "");
+    chip.textContent = `${section.auto ? "" : "📌 "}${section.tag || "söz"} ${missing ? `⚠ ${missing}` : "✓"}`;
+    const where = section.start < score.words.count ? `ölçü ${section.bar + 1}` : "nota kalmadı";
+    chip.title = `«${section.first}…» · başlangıç ${where} · ${section.count} hece`
+      + (missing ? ` · ${missing} hece notaya sığmadı (sözü kısaltmak gerekebilir)` : section.spare ? ` · ${section.spare} nota hecesiz` : "")
+      + "\nTıkla, sonra bu bölümün başlayacağı notaya tıkla.";
+    chip.onclick = () => {
+      score.moving = score.moving === k ? null : k;
+      $("score-place-msg").textContent = "";
+      if (score.moving != null && section.start < score.words.count) score.placeNote = section.start;
+      renderPlacePanel();
+      markPlacement(true);
+    };
+    return chip;
+  }));
+}
 
 // The vocal note under a click on the drawn score.
 function placeClick(element) {
   if (!score.placing || !element || element.el_type !== "note") return;
   const note = score.words.notes.find((n) => n.from >= element.startChar && n.from < element.endChar);
   if (!note) { $("score-place-msg").textContent = "Bu bir vokal notası değil; Vocal satırından bir notaya tıkla."; return; }
+  if (score.moving != null) { placeAction("start", note.number); return; }
   pickPlaceNote(note.number);
 }
 
-function pickPlaceNote(number, section) {
+function pickPlaceNote(number) {
   score.placeNote = number;
-  // The section to move: the one sung on this note, else the next one to start after it.
-  const slot = score.words.slots[number];
-  const sections = score.words.sections;
-  const next = sections.findIndex((s) => s.start > number);
   $("score-place-msg").textContent = "";
-  renderPlacePanel(section ?? (slot ? slot.section : next >= 0 ? next : sections.length - 1));
+  renderPlacePanel();
   markPlacement(true);
 }
 
@@ -1013,26 +1013,29 @@ function markPlacement(scroll = false) {
   if (scroll && picked) picked.scrollIntoView({ block: "nearest" });
 }
 
-function renderPlacePanel(section) {
+function renderPlacePanel() {
   if (!score.placing) return;
-  const { slots, sections, notes, count } = score.words;
-  const n = score.placeNote;
-  const select = $("score-place-section");
-  const keep = section ?? Number(select.value || 0);
-  select.replaceChildren(...sections.map((s, k) => new Option(`${k + 1}. [${s.tag || "söz"}] «${s.first}…»${s.auto ? "" : " 📌"}`, String(k))));
-  select.value = String(Math.min(keep, sections.length - 1));
-  document.getElementById("score-place-tools").style.visibility = n == null ? "hidden" : "";
-  if (n == null) { $("score-place-info").textContent = "Bir vokal notasına tıkla."; return; }
-  const slot = slots[n];
-  const bar = notes.find((x) => x.number === n).bar;
-  const what = !slot ? "hece yok" : slot.hold ? "önceki hece uzuyor" : slot.double ? `iki hece «${slot.text.replace("~", " ")}»` : `hece «${slot.text}»`;
-  const owner = slot ? ` · [${sections[slot.section].tag || "söz"}]` : "";
-  $("score-place-info").textContent = `Seçili: vokal notası ${n + 1}/${count} · ölçü ${bar + 1}${owner} · ${what}`;
-  $("score-place-tools").querySelector('[data-place="hold"]').classList.toggle("on", !!(slot && slot.hold));
-  $("score-place-tools").querySelector('[data-place="double"]').classList.toggle("on", !!(slot && slot.double));
-  $("score-place-tools").querySelector('[data-place="auto"]').disabled = sections[select.value].auto;
+  renderSectionChips();
+  const { slots, sections, notes } = score.words;
+  const n = score.placeNote, k = score.moving;
+  const slot = n == null ? null : slots[n];
+  const tools = $("score-place-tools");
+  const show = (name, on) => tools.querySelector(`[data-place="${name}"]`).classList.toggle("hidden", !on);
+  show("prev", n != null); show("next", n != null);
+  show("hold", n != null && k == null); show("double", n != null && k == null);
+  show("auto", k != null && !sections[k].auto); show("cancel", k != null);
+  tools.querySelector('[data-place="hold"]').classList.toggle("on", !!(slot && slot.hold));
+  tools.querySelector('[data-place="double"]').classList.toggle("on", !!(slot && slot.double));
+  $("score-place-reset").classList.toggle("hidden", LyricsLayout.isEmpty(score.layout));
+  let info;
+  if (k != null) info = `«${sections[k].tag || "söz"}» nereden başlasın? İlk hecesinin söylendiği notaya tıkla.`;
+  else if (n == null) info = "Bir notaya tıkla ya da bir bölüm seçip başlayacağı notaya tıkla. Yalnızca görüntü, YuE2'ye gitmez.";
+  else {
+    const what = !slot ? "hece yok" : slot.hold ? "önceki hece uzuyor" : slot.double ? `«${slot.text.replace("~", " ")}» (iki hece)` : `«${slot.text}»`;
+    info = `Ölçü ${notes.find((x) => x.number === n).bar + 1}${slot ? ` · ${sections[slot.section].tag || "söz"}` : ""} · ${what}`;
+  }
+  $("score-place-info").textContent = info;
 }
-$("score-place-section").addEventListener("change", () => renderPlacePanel());
 
 let layoutSave = null;
 function applyLayout(layout) {
@@ -1052,45 +1055,55 @@ function applyLayout(layout) {
   }, 600);
 }
 
-function placeAction(name) {
-  const n = score.placeNote;
-  if (!score.placing || n == null) return;
+function placeAction(name, at = score.placeNote) {
+  if (!score.placing) return;
   const words = score.words;
-  if (name === "prev" || name === "next") {
-    const to = n + (name === "next" ? 1 : -1);
-    if (to >= 0 && to < words.count) pickPlaceNote(to);
-    return;
-  }
-  const k = Number($("score-place-section").value);
+  const k = score.moving;
+  if (name === "cancel") { score.moving = null; renderPlacePanel(); return; }
   let layout = score.layout;
-  if (name === "start") {
-    layout = LyricsLayout.setStart(layout, words, k, n);
-    if (typeof layout === "string") { $("score-place-msg").textContent = layout; return; }
-  } else if (name === "auto") layout = LyricsLayout.clearStart(layout, k);
-  else {
-    // A mark that would change nothing is not kept.
-    const kind = name === "hold" ? "holds" : "doubles";
-    layout = LyricsLayout.toggle(layout, kind, n);
-    const slot = layout[kind].includes(n) && LyricsLayout.layOut(score.abc, score.job.lyrics, layout).slots[n];
-    if (layout[kind].includes(n) && !(slot && (kind === "holds" ? slot.hold : slot.double))) {
-      $("score-place-msg").textContent = kind === "holds"
-        ? "Burada uzatılacak bir hece yok (bölümün ilk notası ya da hecesiz bir notadan sonra)."
-        : "Bu notaya ikinci bir hece kalmadı.";
+  if (name === "auto") {
+    layout = LyricsLayout.clearStart(layout, k);
+    score.moving = null;
+  } else {
+    if (at == null) return;
+    if (name === "prev" || name === "next") {
+      const to = at + (name === "next" ? 1 : -1);
+      if (to >= 0 && to < words.count) pickPlaceNote(to);
       return;
     }
+    if (name === "start") {
+      if (k == null) return;
+      layout = LyricsLayout.setStart(layout, words, k, at);
+      if (typeof layout === "string") { $("score-place-msg").textContent = layout; return; }
+      score.moving = null;
+    } else {
+      // A mark that would change nothing is not kept.
+      const kind = name === "hold" ? "holds" : "doubles";
+      layout = LyricsLayout.toggle(layout, kind, at);
+      const slot = layout[kind].includes(at) && LyricsLayout.layOut(score.abc, score.job.lyrics, layout).slots[at];
+      if (layout[kind].includes(at) && !(slot && (kind === "holds" ? slot.hold : slot.double))) {
+        $("score-place-msg").textContent = kind === "holds"
+          ? "Burada uzatılacak bir hece yok (bölümün ilk notası ya da hecesiz bir notadan sonra)."
+          : "Bu notaya ikinci bir hece kalmadı.";
+        return;
+      }
+    }
   }
+  score.placeNote = at;
   applyLayout(layout);
-  pickPlaceNote(n, name === "start" || name === "auto" ? k : undefined);
+  pickPlaceNote(at);
 }
 
 for (const button of document.querySelectorAll("#score-place-tools [data-place]")) {
   button.addEventListener("click", () => placeAction(button.dataset.place));
 }
 
-// Keys while placing: arrows move between vocal notes, U holds the syllable before, 2 doubles.
+// Keys while placing: arrows move between vocal notes, U holds the syllable before, 2 doubles,
+// Enter starts the chosen section on the picked note, Esc stops choosing.
 $("score-modal").addEventListener("keydown", (event) => {
   if (!score.placing || score.edit || /^(INPUT|SELECT|TEXTAREA)$/.test(event.target.tagName)) return;
-  const name = { ArrowLeft: "prev", ArrowRight: "next", u: "hold", U: "hold", "2": "double" }[event.key];
+  if (event.key === "Escape" && score.moving != null) { event.preventDefault(); placeAction("cancel"); return; }
+  const name = { ArrowLeft: "prev", ArrowRight: "next", u: "hold", U: "hold", "2": "double", Enter: "start" }[event.key];
   if (!name) return;
   event.preventDefault();
   placeAction(name);
@@ -1116,7 +1129,6 @@ function setEditing(on) {
   $("score-reset").classList.toggle("hidden", !on || !(scoreSource() || {}).score_edited);
   for (const id of ["score-edit", "score-print", "score-midi", "score-abc"]) $(id).classList.toggle("hidden", on);
   $("score-lyrics").closest(".score-tools").classList.toggle("hidden", on);
-  if (on) $("score-syll").classList.add("hidden");
   if (!on) score.edit = null;
 }
 

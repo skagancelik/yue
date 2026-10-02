@@ -263,23 +263,21 @@
       <div class="score-tools">
         <label class="check score-lyrics-check"><input id="score-lyrics" type="checkbox" checked> Sözleri notaların altında göster <span class="muted small">(tahmini yerleşim)</span></label>
         <button type="button" id="score-place" class="btn ghost small hidden" title="Bölümlerin başladığı notayı, uzayan ve iki heceli notaları işaretle">✎ Heceleri yerleştir</button>
-        <button type="button" id="score-place-reset" class="btn ghost small hidden" title="Bütün bölümler otomatik yerleşsin">Yerleşimi sıfırla</button>
       </div>
-      <p id="score-place-help" class="muted small score-place-help hidden">Heceler yalnızca görmek ve kontrol etmek için yerleşir; YuE2 heceleri notalara kendisi dağıtır, bu yerleşim modele gitmez. Bir vokal notasına tıkla: bir bölümün başladığı notayı seç (sözsüz giriş ya da mırıldanma önünde boş kalır), bir hecenin birden fazla notaya uzadığını ya da bir notada iki hece söylendiğini işaretle. Gri notalara hece düşmüyor, mavi notalarda önceki hece uzuyor.</p>
       <div id="score-place-panel" class="score-note score-place hidden">
+        <div id="score-place-sections" class="score-sections"></div>
         <span id="score-place-info" class="small"></span>
         <div id="score-place-tools" class="score-note-tools">
           <button type="button" class="btn ghost small" data-place="prev" title="Önceki vokal notası (←)">◀</button>
           <button type="button" class="btn ghost small" data-place="next" title="Sonraki vokal notası (→)">▶</button>
-          <select id="score-place-section" class="small-select" aria-label="Söz bölümü"></select>
-          <button type="button" class="btn ghost small" data-place="start" title="Seçili söz bölümünün ilk hecesi bu notada söylensin">Bu bölüm bu notadan başlasın</button>
-          <button type="button" class="btn ghost small" data-place="auto" title="Seçili söz bölümü yeniden kendiliğinden yerleşsin">Otomatik başlasın</button>
           <button type="button" class="btn ghost small toggle-btn" data-place="hold" title="Bu notada yeni hece yok; önceki hece bu notaya da uzar (U)">Önceki hece uzasın</button>
           <button type="button" class="btn ghost small toggle-btn" data-place="double" title="Bu notada iki hece söylenir (2)">İki hece</button>
+          <button type="button" class="btn ghost small" data-place="auto" title="Bölüm yeniden kendiliğinden yerleşsin">Otomatik başlasın</button>
+          <button type="button" class="btn ghost small" data-place="cancel" title="Esc">Vazgeç</button>
+          <button type="button" id="score-place-reset" class="btn ghost small hidden" title="Bütün bölümler otomatik yerleşsin, işaretler silinsin">Sıfırla</button>
+          <span id="score-place-msg" class="muted small"></span>
         </div>
-        <span id="score-place-msg" class="muted small"></span>
       </div>
-      <div id="score-syll" class="score-syll small hidden"></div>
       <div id="score-editor" class="score-editor hidden">
         <p class="muted small">Bölüm adlarını, hangi notaların <b>söylendiğini</b> (Vocal) ya da <b>enstrümanla çalındığını</b> (Ins) ve notaların perde ve sürelerini düzelt. Bir notaya tıkla; Shift ile tıklayınca ölçü aralığı seçilir. Kaydedince bu besteden yapılan yeni düzenlemeler bu notayla üretilir; melodi kayıttan yeniden çıkarılmaz.</p>
         <div id="score-sections" class="score-sections"></div>

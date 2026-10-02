@@ -310,6 +310,8 @@ a.menu-item { text-decoration: none; display: block; }
 .section-chip { border: 1px solid var(--line); background: var(--panel-2); color: var(--text); border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
 .section-chip.sung { border-color: var(--accent); }
 .section-chip.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.section-chip.warn { border-color: var(--warn); color: var(--warn); }
+.section-chip.warn.on { color: #fff; }
 .score-compare { display: grid; gap: 2px; }
 .score-compare .warn { color: var(--warn); }
 .score-compare .ok { color: var(--ok); }
@@ -320,15 +322,10 @@ a.menu-item { text-decoration: none; display: block; }
 .score-note { display: grid; gap: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
 .score-note-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .score-note-tools .btn { padding: 5px 10px; }
-.score-place-help { margin: 0 0 8px; }
 /* Stays in view while scrolling down the score. */
 .score-place { margin: 0 0 10px; position: sticky; top: 0; z-index: 2; }
 .score-place .small-select { max-width: 100%; }
 .toggle-btn.on { background: var(--accent); color: #fff; border-color: var(--accent); }
-.score-syll { display: grid; gap: 2px; margin: 0 0 10px; }
-.syll-row { text-align: left; background: none; border: 0; padding: 2px 0; color: var(--text); font: inherit; cursor: pointer; }
-.syll-row:hover { color: var(--accent); }
-.syll-row.warn { color: var(--warn); }
 .score-paper .abcjs-lyric-hold { fill: #1f6feb; }
 .score-paper .abcjs-lyric-empty { fill: #9a9a9a; }
 
