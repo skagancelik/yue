@@ -90,16 +90,18 @@ const LyricsLayout = (() => {
       ? saved.starts.map((n) => (Number.isInteger(n) && n >= 0 ? n : null))
       : legacyStart ? [legacyStart] : [];
     const layout = { starts, holds: ints(saved && saved.holds), doubles: ints(saved && saved.doubles) };
+    if (saved && Array.isArray(saved.at)) layout.at = saved.at.map((u) => (Number.isInteger(u) && u >= 0 ? u : null));
     if (saved && Array.isArray(saved.map)) layout.map = saved.map.map((n) => (Number.isInteger(n) && n >= 0 ? n : null));
     if (saved && typeof saved.lyrics === "string") layout.lyrics = saved.lyrics;
     return layout;
   }
 
-  const isEmpty = (layout) => !layout.map && layout.lyrics == null
+  const isEmpty = (layout) => !layout.map && !layout.at && layout.lyrics == null
     && !layout.starts.some((n) => n != null) && !layout.holds.length && !layout.doubles.length;
 
   // What the saved form keeps: trailing automatic starts dropped, notes sorted.
   function compact(layout) {
+    if (layout.at) return layout.lyrics == null ? { at: layout.at } : { at: layout.at, lyrics: layout.lyrics };
     if (layout.map) return layout.lyrics == null ? { map: layout.map } : { map: layout.map, lyrics: layout.lyrics };
     const starts = [...layout.starts];
     while (starts.length && starts[starts.length - 1] == null) starts.pop();

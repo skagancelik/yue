@@ -263,47 +263,6 @@
       <div class="score-tools">
         <label class="check score-lyrics-check"><input id="score-lyrics" type="checkbox" checked> Sözleri notaların altında göster <span class="muted small">(tahmini yerleşim)</span></label>
       </div>
-      <div id="score-editor" class="score-editor hidden">
-        <p class="muted small">Bölüm adlarını, hangi notaların <b>söylendiğini</b> (Vocal) ya da <b>enstrümanla çalındığını</b> (Ins) ve notaların perde ve sürelerini düzelt. Bir notaya tıkla; Shift ile tıklayınca ölçü aralığı seçilir. Kaydedince bu besteden yapılan yeni düzenlemeler bu notayla üretilir; melodi kayıttan yeniden çıkarılmaz.</p>
-        <div id="score-sections" class="score-sections"></div>
-        <div id="score-compare" class="score-compare small"></div>
-        <div class="score-edit-tools">
-          <span id="score-sel" class="muted small"></span>
-          <select id="score-label" class="small-select" aria-label="Bölüm adı">
-            <option value="intro">intro (giriş)</option>
-            <option value="verse">verse (kıta)</option>
-            <option value="pre-chorus">pre-chorus (nakarat öncesi)</option>
-            <option value="chorus">chorus (nakarat)</option>
-            <option value="post-chorus">post-chorus (nakarat sonrası)</option>
-            <option value="bridge">bridge (köprü)</option>
-            <option value="interlude">interlude (ara müzik)</option>
-            <option value="solo">solo</option>
-            <option value="outro">outro (bitiş)</option>
-          </select>
-          <button type="button" id="score-set-section" class="btn ghost small" disabled>Seçimi bu bölüm yap</button>
-          <button type="button" id="score-swap" class="btn ghost small" disabled title="Seçili ölçülerde söylenen notalar enstrümana, enstrümanınkiler vokale geçer">🎤⇄🎹 Vokal ⇄ Enstrüman</button>
-          <button type="button" id="score-undo" class="btn ghost small" disabled>↶ Geri al</button>
-        </div>
-        <div id="score-note" class="score-note hidden">
-          <span id="score-note-info" class="small"></span>
-          <div class="score-note-tools">
-            <button type="button" class="btn ghost small" data-note="prev" title="Önceki nota (←)">◀</button>
-            <button type="button" class="btn ghost small" data-note="next" title="Sonraki nota (→)">▶</button>
-            <button type="button" class="btn ghost small" data-note="up" title="Yarım ses tiz (↑)">♯ ↑</button>
-            <button type="button" class="btn ghost small" data-note="down" title="Yarım ses pes (↓)">♭ ↓</button>
-            <button type="button" class="btn ghost small" data-note="octave-up" title="Bir oktav tiz (Shift+↑)">Oktav ↑</button>
-            <button type="button" class="btn ghost small" data-note="octave-down" title="Bir oktav pes (Shift+↓)">Oktav ↓</button>
-            <button type="button" class="btn ghost small" data-note="longer" title="Uzat; süreyi sonraki nota ya da sustan alır (+)">Uzat +</button>
-            <button type="button" class="btn ghost small" data-note="shorter" title="Kısalt; artan süre susa döner (−)">Kısalt −</button>
-            <select id="score-step" class="small-select" aria-label="Uzatma/kısaltma adımı" title="Uzat/Kısalt adımı"></select>
-            <button type="button" class="btn ghost small" data-note="rest" title="Notayı susa çevir (Delete)">Sus yap</button>
-            <button type="button" class="btn ghost small" data-note="note" title="Susu notaya çevir (N)">Notaya çevir</button>
-            <button type="button" class="btn ghost small" data-note="split" title="İki eşit notaya böl">Böl</button>
-            <button type="button" class="btn ghost small" data-note="merge" title="Sonraki nota ya da susla birleştir">Sonrakiyle birleştir</button>
-          </div>
-          <span id="score-note-msg" class="muted small"></span>
-        </div>
-      </div>
       <div id="score-paper" class="score-paper"></div>
     </div>
     <div class="modal-actions">
@@ -311,11 +270,7 @@
       <button type="button" id="score-print" class="btn ghost small" disabled>🖨 PDF / Yazdır</button>
       <button type="button" id="score-midi" class="btn ghost small" disabled>⬇ MIDI</button>
       <a id="score-abc" class="btn ghost small" rel="noopener">⬇ ABC</a>
-      <button type="button" id="score-daw" class="btn ghost small hidden" title="Notayı soldan sağa akan zaman çizgisinde aç: dinle, heceleri kaydır, harfleri düzelt">🎛 Zaman çizgisi</button>
-      <button type="button" id="score-edit" class="btn ghost small hidden" title="Bölümleri ve vokal/enstrüman ayrımını düzelt, besteye kaydet">✎ Notayı düzelt</button>
-      <button type="button" id="score-save" class="btn primary small hidden" disabled>💾 Besteye kaydet</button>
-      <button type="button" id="score-cancel" class="btn ghost small hidden">Vazgeç</button>
-      <button type="button" id="score-reset" class="btn ghost small hidden" title="Düzeltmeyi sil; yeni düzenlemeler melodiyi yine kayıttan çıkarır">Özgün notaya dön</button>
+      <button type="button" id="score-daw" class="btn ghost small hidden" title="Notayı soldan sağa akan zaman çizgisinde aç: dinle, perde ve süreleri, bölümleri düzelt, heceleri kaydır, harfleri düzelt">🎛 Zaman çizgisinde düzenle</button>
     </div>
   </dialog>
 
@@ -330,8 +285,45 @@
       <button type="button" id="daw-undo" class="btn ghost small" title="Geri al (⌘/Ctrl+Z)">↶ Geri al</button>
       <button type="button" id="daw-auto" class="btn ghost small" title="Heceler yeniden kendiliğinden yerleşsin">Otomatik yerleştir</button>
       <span class="daw-spacer"></span>
+      <span id="daw-origin" class="muted small"></span>
+      <button type="button" id="daw-reset" class="btn ghost small hidden" title="Bestenin düzeltilmiş notasını sil; yeni düzenlemeler melodiyi yine kayıttan çıkarır">Özgün notaya dön</button>
       <button type="button" id="daw-save" class="btn primary small" disabled>💾 Kaydet</button>
       <button type="button" id="daw-close" class="icon-btn" aria-label="Kapat">✕</button>
+    </div>
+    <div class="daw-tools">
+      <div id="daw-compare" class="daw-compare small hidden"></div>
+      <div id="daw-note-tools" class="daw-context hidden">
+        <span id="daw-note-info" class="small daw-context-info"></span>
+        <button type="button" class="btn ghost small" data-note="prev" title="Önceki nota (←)">◀</button>
+        <button type="button" class="btn ghost small" data-note="next" title="Sonraki nota (→)">▶</button>
+        <button type="button" class="btn ghost small" data-note="up" title="Yarım ses tiz (↑)">♯ ↑</button>
+        <button type="button" class="btn ghost small" data-note="down" title="Yarım ses pes (↓)">♭ ↓</button>
+        <button type="button" class="btn ghost small" data-note="octave-up" title="Bir oktav tiz (Shift+↑)">Oktav ↑</button>
+        <button type="button" class="btn ghost small" data-note="octave-down" title="Bir oktav pes (Shift+↓)">Oktav ↓</button>
+        <button type="button" class="btn ghost small" data-note="longer" title="Uzat; süreyi sonraki nota ya da sustan alır (+)">Uzat +</button>
+        <button type="button" class="btn ghost small" data-note="shorter" title="Kısalt; artan süre susa döner (−)">Kısalt −</button>
+        <select id="daw-step" class="small-select" aria-label="Uzatma/kısaltma adımı" title="Uzat/Kısalt adımı"></select>
+        <button type="button" class="btn ghost small" data-note="rest" title="Notayı susa çevir (Delete)">Sus yap</button>
+        <button type="button" class="btn ghost small" data-note="note" title="Susu notaya çevir (N)">Notaya çevir</button>
+        <button type="button" class="btn ghost small" data-note="split" title="İki eşit notaya böl">Böl</button>
+        <button type="button" class="btn ghost small" data-note="merge" title="Sonraki nota ya da susla birleştir">Sonrakiyle birleştir</button>
+      </div>
+      <div id="daw-bar-tools" class="daw-context hidden">
+        <span id="daw-bar-info" class="small daw-context-info"></span>
+        <select id="daw-label-name" class="small-select" aria-label="Bölüm adı">
+          <option value="intro">intro (giriş)</option>
+          <option value="verse">verse (kıta)</option>
+          <option value="pre-chorus">pre-chorus (nakarat öncesi)</option>
+          <option value="chorus">chorus (nakarat)</option>
+          <option value="post-chorus">post-chorus (nakarat sonrası)</option>
+          <option value="bridge">bridge (köprü)</option>
+          <option value="interlude">interlude (ara müzik)</option>
+          <option value="solo">solo</option>
+          <option value="outro">outro (bitiş)</option>
+        </select>
+        <button type="button" id="daw-set-section" class="btn ghost small">Bölüm yap</button>
+        <button type="button" id="daw-swap" class="btn ghost small" title="Seçili ölçülerde söylenen notalar enstrümana, enstrümanınkiler vokale geçer">🎤⇄🎹 Vokal ⇄ Enstrüman</button>
+      </div>
     </div>
     <div id="daw-scroll" class="daw-scroll"></div>
     <div id="daw-tray" class="daw-tray hidden"></div>

@@ -420,21 +420,22 @@ def validate_lyrics_layout(layout):
     """Where the lyrics sit under the vocal notes in the score views (display only, YuE2 never sees it).
     Section form: starts = the note each lyric section starts on (null = automatic), holds = notes that
     hold the syllable before, doubles = notes that carry two syllables. Timeline form: map = the note of
-    every syllable (null = none), lyrics = the arrangement's lyrics with corrected letters. Notes are
-    numbered from 0."""
+    every syllable (null = none), lyrics = the arrangement's lyrics with corrected letters; at = the L:
+    unit (from the start of the song) each syllable's note starts on, so the syllables find their notes
+    again after the score is edited. Notes are numbered from 0."""
     if layout is None:
         return None
     note = lambda n: isinstance(n, int) and not isinstance(n, bool) and 0 <= n < 100000
-    lists = ("starts", "holds", "doubles", "map")
+    lists = ("starts", "holds", "doubles", "map", "at")
     if (not isinstance(layout, dict) or set(layout) - {*lists, "lyrics"}
             or not all(isinstance(layout.get(k, []), list) and len(layout.get(k, [])) <= 20000 for k in lists)
-            or not all(n is None or note(n) for k in ("starts", "map") for n in layout.get(k, []))
+            or not all(n is None or note(n) for k in ("starts", "map", "at") for n in layout.get(k, []))
             or not all(note(n) for k in ("holds", "doubles") for n in layout.get(k, []))):
         raise HttpError(400, "lyrics_layout geçersiz")
     out = {k: layout[k] for k in lists if k in layout}
     if "lyrics" in layout:
         out["lyrics"] = validate_text(layout, "lyrics", 16000, required=False) or ""
-    if "map" in out:
+    if "map" in out or "at" in out:
         return out
     return out if any(n is not None for k in out for n in out[k]) else None
 
