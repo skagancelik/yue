@@ -28,32 +28,42 @@ const LyricsLayout = (() => {
 
   const sectionName = (text) => text.toLowerCase().replace(/[^a-z]/g, "");
 
-  // [{ name, tag, syllables: [{ text, joined }] }]; joined = the next syllable is in the same word.
+  // [{ name, tag, syllables: [{ text, joined, from, to, index }] }]; joined = the next syllable is
+  // in the same word; from/to = where it is in the lyrics text; index counts all syllables from 0.
   function lyricSections(lyrics) {
     const sections = [];
-    let current = null;
-    for (const raw of (lyrics || "").split(/\r?\n/)) {
+    let current = null, offset = 0, index = 0;
+    for (const raw of (lyrics || "").split("\n")) {
+      const lineStart = offset;
+      offset += raw.length + 1;
       const tag = raw.trim().match(/^\[([^\]]+)\]$/);
       if (tag) { current = { name: sectionName(tag[1]), tag: tag[1].trim(), syllables: [] }; sections.push(current); continue; }
       // Characters that mean something on an ABC w: line are dropped.
-      const words = raw.replace(/[-_*~|%\\]/g, " ").split(/\s+/).filter((w) => [...w].some(isLetter));
+      const words = [...raw.replace(/[-_*~|%\\\r]/g, " ").matchAll(/\S+/g)].filter((m) => [...m[0]].some(isLetter));
       if (!words.length) continue;
       if (!current) { current = { name: "", tag: "", syllables: [] }; sections.push(current); }
       for (const word of words) {
-        const parts = syllables(word);
-        parts.forEach((text, k) => current.syllables.push({ text, joined: k < parts.length - 1 }));
+        let at = lineStart + word.index;
+        const parts = syllables(word[0]);
+        parts.forEach((text, k) => {
+          current.syllables.push({ text, joined: k < parts.length - 1, from: at, to: at + text.length, index: index++ });
+          at += text.length;
+        });
       }
     }
     return sections.filter((section) => section.syllables.length);
   }
 
+  const allSyllables = (lyrics) => lyricSections(lyrics).flatMap((section, k) => section.syllables.map((syl) => ({ ...syl, section: k })));
+
   // The notes and rests of one ABC music line, in the order abcjs pairs them with w: tokens.
   // starts is false for the held continuation of a tie; at is the note's position in the line;
-  // bar counts the line's bar lines before it ("Z4" is four bars).
-  function noteSlots(line) {
+  // bar counts the line's bar lines before it ("Z4" is four bars). tiedIn: the line starts by
+  // continuing a note tied over from the voice's previous line.
+  function noteSlots(line, tiedIn = false) {
     const token = /"[^"]*"|\[[A-Za-z]:[^\]]*\]|!.*?!|\||(?:\^\^|__|\^|_|=)?([A-Ga-gzxZX])[,']*([0-9]*)\/*[0-9]*(-?)/g;
     const slots = [];
-    let tied = false, bar = 0, bars = 1, match;
+    let tied = tiedIn, bar = 0, bars = 1, match;
     while ((match = token.exec(line))) {
       if (match[0] === "|") { bar += bars; bars = 1; continue; }
       if (!match[1]) continue;
@@ -66,28 +76,75 @@ const LyricsLayout = (() => {
       slots.push({ starts: !tied, at: match.index, bar });
       tied = match[3] === "-";
     }
-    return { slots, bars: bar };
+    return { slots, bars: bar, tied };
   }
 
   // The saved layout of a job, or an empty one: { starts: [note or null per lyric section],
   // holds: [notes that hold the syllable before], doubles: [notes that carry two syllables] }.
   // Vocal notes are numbered from 0, tie continuations not counted.
+  // The timeline editor saves instead map: the note of every syllable (null = on no note), and
+  // lyrics: the arrangement's lyrics with corrected letters, when they were changed.
   function normalize(saved, legacyStart) {
     const ints = (list) => (Array.isArray(list) ? list.filter((n) => Number.isInteger(n) && n >= 0) : []);
     const starts = saved && Array.isArray(saved.starts)
       ? saved.starts.map((n) => (Number.isInteger(n) && n >= 0 ? n : null))
       : legacyStart ? [legacyStart] : [];
-    return { starts, holds: ints(saved && saved.holds), doubles: ints(saved && saved.doubles) };
+    const layout = { starts, holds: ints(saved && saved.holds), doubles: ints(saved && saved.doubles) };
+    if (saved && Array.isArray(saved.map)) layout.map = saved.map.map((n) => (Number.isInteger(n) && n >= 0 ? n : null));
+    if (saved && typeof saved.lyrics === "string") layout.lyrics = saved.lyrics;
+    return layout;
   }
 
-  const isEmpty = (layout) => !layout.starts.some((n) => n != null) && !layout.holds.length && !layout.doubles.length;
+  const isEmpty = (layout) => !layout.map && layout.lyrics == null
+    && !layout.starts.some((n) => n != null) && !layout.holds.length && !layout.doubles.length;
 
   // What the saved form keeps: trailing automatic starts dropped, notes sorted.
   function compact(layout) {
+    if (layout.map) return layout.lyrics == null ? { map: layout.map } : { map: layout.map, lyrics: layout.lyrics };
     const starts = [...layout.starts];
     while (starts.length && starts[starts.length - 1] == null) starts.pop();
     const sorted = (list) => [...new Set(list)].sort((a, b) => a - b);
     return { starts, holds: sorted(layout.holds), doubles: sorted(layout.doubles) };
+  }
+
+  // Syllables on the notes the map gives them. Two syllables on one note are sung together; an
+  // empty note between two syllables of the same section holds the syllable before it.
+  function placeByMap(lyricParts, map, count, slots, sections, noteBars) {
+    let g = 0;
+    lyricParts.forEach((section, k) => {
+      let placed = 0, first = count, end = 0;
+      for (const syl of section.syllables) {
+        const n = map[g++];
+        if (n == null || n >= count) continue;
+        placed++;
+        first = Math.min(first, n);
+        end = Math.max(end, n + 1);
+        const slot = slots[n];
+        if (slot) {
+          slot.text += (slot.joined ? "" : "~") + syl.text;
+          slot.joined = syl.joined;
+          slot.double = true;
+          slot.index.push(syl.index);
+        } else slots[n] = { section: k, text: syl.text, joined: syl.joined, index: [syl.index] };
+      }
+      sections.push({
+        tag: section.tag || section.name, count: section.syllables.length, placed, start: first, end: placed ? end : first,
+        limit: count, bar: noteBars[first], auto: false, spare: 0,
+        first: section.syllables.slice(0, 4).map((x) => x.text + (x.joined ? "" : " ")).join("").trim(),
+      });
+    });
+    let previous = null;
+    for (let n = 0; n < count; n++) {
+      if (slots[n]) { previous = slots[n]; continue; }
+      const next = slots.slice(n + 1).find(Boolean);
+      if (previous && next && previous.section === next.section) slots[n] = { section: previous.section, hold: true, text: "" };
+    }
+    sections.forEach((section, k) => {
+      const next = sections.slice(k + 1).find((s) => s.placed);
+      let spare = 0;
+      for (let n = section.end; n < (next ? next.start : count); n++) if (!slots[n]) spare++;
+      section.spare = section.placed ? spare : 0;
+    });
   }
 
   // Lays the lyrics on the score. Returns
@@ -99,7 +156,7 @@ const LyricsLayout = (() => {
   function layOut(abc, lyrics, layout = normalize(null)) {
     const lines = abc.split(/\r?\n/);
     const parts = [];   // vocal lines grouped by score section: { name, lines: [{ index, slots }] }
-    let body = false, voice = "", part = null, comment = "", bar = 0;
+    let body = false, voice = "", part = null, comment = "", bar = 0, tied = false;
     lines.forEach((line, index) => {
       if (!body) { if (/^K:/.test(line)) body = true; return; }
       const section = line.match(/^%\s*(.+)$/);
@@ -107,7 +164,8 @@ const LyricsLayout = (() => {
       const voiceLine = line.match(/^V:\s*(\S+)/);
       if (voiceLine) { voice = voiceLine[1]; return; }
       if (/^[A-Za-z]:/.test(line) || !line.trim() || voice.toLowerCase() !== "vocal") return;
-      const { slots, bars } = noteSlots(line);
+      const { slots, bars, tied: tiedOut } = noteSlots(line, tied);
+      tied = tiedOut;
       for (const slot of slots) slot.bar += bar;
       bar += bars;
       if (!slots.some((slot) => slot.starts)) return;
@@ -142,12 +200,17 @@ const LyricsLayout = (() => {
     });
     if (matched.includes(null)) matched = matched.map(() => null);
 
+    const map = layout.map && layout.map.length === total ? layout.map : null;
     const holds = new Set(layout.holds), doubles = new Set(layout.doubles);
     const chosen = (k) => (layout.starts[k] != null && layout.starts[k] < count ? layout.starts[k] : null);
     const slots = [];
     const sections = [];
-    let cursor = 0, placed = 0;
-    lyricParts.forEach((section, k) => {
+    let cursor = 0, placed = 0, base = 0;
+    if (map) {
+      placeByMap(lyricParts, map, count, slots, sections, noteBars);
+      placed = sections.reduce((sum, section) => sum + section.placed, 0);
+    }
+    if (!map) lyricParts.forEach((section, k) => {
       const fixed = chosen(k) ?? (matched[k] ? matched[k].first : null);
       const start = Math.min(Math.max(fixed ?? cursor, cursor), count);
       // A section ends where the next placed one starts (or its score part ends); squeezed
@@ -165,10 +228,10 @@ const LyricsLayout = (() => {
           slots[n] = { section: k, hold: true, text: "" };
         } else if (doubles.has(n) && s + 1 < sylls.length) {
           const [a, b] = [sylls[s], sylls[s + 1]];
-          slots[n] = { section: k, double: true, text: a.text + (a.joined ? "" : "~") + b.text, joined: b.joined };
+          slots[n] = { section: k, double: true, text: a.text + (a.joined ? "" : "~") + b.text, joined: b.joined, index: [base + s, base + s + 1] };
           s += 2;
         } else {
-          slots[n] = { section: k, text: sylls[s].text, joined: sylls[s].joined };
+          slots[n] = { section: k, text: sylls[s].text, joined: sylls[s].joined, index: [base + s] };
           s += 1;
         }
         last = n;
@@ -176,6 +239,7 @@ const LyricsLayout = (() => {
       // The last syllable can be held too.
       for (; n < limit && holds.has(n) && last === n - 1 && s; n++) { slots[n] = { section: k, hold: true, text: "" }; last = n; }
       placed += s;
+      base += sylls.length;
       cursor = last + 1;
       sections.push({
         tag: section.tag || section.name, count: sylls.length, placed: s, start, limit, end: cursor, bar: noteBars[start],
@@ -184,7 +248,7 @@ const LyricsLayout = (() => {
     });
     // Notes a section leaves empty before the next section starts (a following section that just
     // continues where this one stopped leaves none).
-    sections.forEach((section, k) => {
+    if (!map) sections.forEach((section, k) => {
       const nextSection = sections[k + 1];
       const follows = nextSection && nextSection.start === section.end && nextSection.auto && !matched[k + 1];
       section.spare = follows ? 0 : Math.max(0, section.limit - section.end);
@@ -223,34 +287,63 @@ const LyricsLayout = (() => {
     return { abc: result.join("\n"), placed, total, notes, sections, slots, count };
   }
 
-  // Moves lyric section k to start on note n. Sections must stay in order: returns an error text
-  // when n is not after the previous section's start or not before the next chosen start.
-  function setStart(layout, words, k, n) {
-    const prev = words.sections[k - 1];
-    if (prev && n <= prev.start) return `"${words.sections[k].tag}" bölümü "${prev.tag}" bölümünden sonra başlamalı.`;
-    for (let j = k + 1; j < words.sections.length; j++) {
-      if (!words.sections[j].auto && n >= words.sections[j].start) return `"${words.sections[k].tag}" bölümü "${words.sections[j].tag}" bölümünden önce başlamalı.`;
+  // The note of every syllable as the layout puts it (null = on no note).
+  function toMap(words, total) {
+    const map = new Array(total).fill(null);
+    words.slots.forEach((slot, n) => { if (slot && slot.index) for (const g of slot.index) map[g] = n; });
+    return map;
+  }
+
+  // A syllable map is valid when every syllable is on an existing note and the order of the
+  // syllables never goes back (two syllables may share a note).
+  function checkMap(map, count) {
+    let last = -1;
+    for (const n of map) {
+      if (n == null) continue;
+      if (n < 0 || n >= count) return "Bu kadar kaydırınca hece notaların dışına çıkıyor.";
+      if (n < last) return "Heceler birbirinin üzerinden atlayamaz; sıraları değişmez.";
+      last = n;
     }
-    const starts = [...layout.starts];
-    while (starts.length <= k) starts.push(null);
-    starts[k] = n;
-    return { ...layout, starts };
+    return null;
   }
 
-  function clearStart(layout, k) {
-    const starts = [...layout.starts];
-    if (k < starts.length) starts[k] = null;
-    return { ...layout, starts };
+  // Moves the selected syllables by delta notes. Only they move: one that would land on a note
+  // another syllable sits on, or pass it, stops the move (an error text is returned).
+  function moveSyllables(map, selected, delta, count) {
+    const out = map.map((n, g) => (selected.has(g) && n != null ? n + delta : n));
+    const taken = new Set(map.filter((n, g) => n != null && !selected.has(g)));
+    if (out.some((n, g) => selected.has(g) && n != null && taken.has(n))) return "Orada başka bir hece var; önce onu kaydır.";
+    return checkMap(out, count) || out;
   }
 
-  // Turns a hold (the syllable before goes on over this note) or a double syllable on or off.
-  function toggle(layout, kind, n) {
-    const other = kind === "holds" ? "doubles" : "holds";
-    const on = layout[kind].includes(n);
-    return { ...layout, [kind]: on ? layout[kind].filter((x) => x !== n) : [...layout[kind], n], [other]: layout[other].filter((x) => x !== n) };
+  // Puts one syllable (that was on no note) on note n.
+  function placeSyllable(map, g, n, count) {
+    if (map.some((m, j) => j !== g && m === n)) return "Bu notada zaten bir hece var.";
+    const out = [...map];
+    out[g] = n;
+    return checkMap(out, count) || out;
   }
 
-  return { syllables, sectionName, lyricSections, noteSlots, normalize, isEmpty, compact, layOut, setStart, clearStart, toggle };
+  // Replaces the letters of syllable g in the lyrics ("" deletes it). The map keeps every other
+  // syllable on its note; when the new letters make more syllables, the extra ones go on the
+  // following empty notes (or on no note when there is no room).
+  function editSyllable(lyrics, map, g, text, count) {
+    const before = allSyllables(lyrics);
+    const syl = before[g];
+    const next = lyrics.slice(0, syl.from) + text + lyrics.slice(syl.to);
+    const grown = allSyllables(next).length - before.length;
+    const made = Math.max(0, 1 + grown);
+    const out = map.slice(0, g);
+    const after = map.slice(g + 1 + Math.max(0, -grown - 1));
+    const limit = after.find((n) => n != null) ?? count;
+    for (let k = 0; k < made; k++) {
+      const n = k === 0 ? map[g] : out[out.length - 1] != null && out[out.length - 1] + 1 < limit ? out[out.length - 1] + 1 : null;
+      out.push(n);
+    }
+    return { lyrics: next, map: out.concat(after) };
+  }
+
+  return { syllables, sectionName, lyricSections, allSyllables, noteSlots, normalize, isEmpty, compact, layOut, toMap, checkMap, moveSyllables, placeSyllable, editSyllable };
 })();
 
 if (typeof module !== "undefined") module.exports = LyricsLayout;

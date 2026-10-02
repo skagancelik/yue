@@ -262,20 +262,6 @@
       <p id="score-status" class="muted small"></p>
       <div class="score-tools">
         <label class="check score-lyrics-check"><input id="score-lyrics" type="checkbox" checked> Sözleri notaların altında göster <span class="muted small">(tahmini yerleşim)</span></label>
-        <button type="button" id="score-place" class="btn ghost small hidden" title="Bölümlerin başladığı notayı, uzayan ve iki heceli notaları işaretle">✎ Heceleri yerleştir</button>
-      </div>
-      <div id="score-place-panel" class="score-note score-place hidden">
-        <div class="score-sections"><span id="score-place-label" class="small muted"></span><span id="score-place-sections" class="score-sections"></span></div>
-        <span id="score-place-info" class="small"></span>
-        <div id="score-place-tools" class="score-note-tools">
-          <button type="button" class="btn ghost small" data-place="prev" title="Önceki vokal notası (←)">◀</button>
-          <button type="button" class="btn ghost small" data-place="next" title="Sonraki vokal notası (→)">▶</button>
-          <button type="button" class="btn ghost small toggle-btn" data-place="hold" title="Bu notada yeni hece yok; önceki hece bu notaya da uzar (U)">Önceki hece uzasın</button>
-          <button type="button" class="btn ghost small toggle-btn" data-place="double" title="Bu notada iki hece söylenir (2)">İki hece</button>
-          <button type="button" class="btn ghost small" data-place="auto" title="Bölüm yeniden kendiliğinden yerleşsin">Otomatik başlasın</button>
-          <button type="button" id="score-place-reset" class="btn ghost small hidden" title="Bütün bölümler otomatik yerleşsin, işaretler silinsin">Sıfırla</button>
-          <span id="score-place-msg" class="muted small"></span>
-        </div>
       </div>
       <div id="score-editor" class="score-editor hidden">
         <p class="muted small">Bölüm adlarını, hangi notaların <b>söylendiğini</b> (Vocal) ya da <b>enstrümanla çalındığını</b> (Ins) ve notaların perde ve sürelerini düzelt. Bir notaya tıkla; Shift ile tıklayınca ölçü aralığı seçilir. Kaydedince bu besteden yapılan yeni düzenlemeler bu notayla üretilir; melodi kayıttan yeniden çıkarılmaz.</p>
@@ -325,11 +311,32 @@
       <button type="button" id="score-print" class="btn ghost small" disabled>🖨 PDF / Yazdır</button>
       <button type="button" id="score-midi" class="btn ghost small" disabled>⬇ MIDI</button>
       <a id="score-abc" class="btn ghost small" rel="noopener">⬇ ABC</a>
+      <button type="button" id="score-daw" class="btn ghost small hidden" title="Notayı soldan sağa akan zaman çizgisinde aç: dinle, heceleri kaydır, harfleri düzelt">🎛 Zaman çizgisi</button>
       <button type="button" id="score-edit" class="btn ghost small hidden" title="Bölümleri ve vokal/enstrüman ayrımını düzelt, besteye kaydet">✎ Notayı düzelt</button>
       <button type="button" id="score-save" class="btn primary small hidden" disabled>💾 Besteye kaydet</button>
       <button type="button" id="score-cancel" class="btn ghost small hidden">Vazgeç</button>
       <button type="button" id="score-reset" class="btn ghost small hidden" title="Düzeltmeyi sil; yeni düzenlemeler melodiyi yine kayıttan çıkarır">Özgün notaya dön</button>
     </div>
+  </dialog>
+
+  <dialog id="daw" class="daw">
+    <div class="daw-bar">
+      <strong id="daw-title" class="daw-title"></strong>
+      <button type="button" id="daw-play" class="btn primary small daw-play" title="Çal / durdur (boşluk)">▶</button>
+      <span id="daw-time" class="daw-time small"></span>
+      <button type="button" id="daw-zoom-out" class="btn ghost small" title="Uzaklaş">−</button>
+      <button type="button" id="daw-zoom-in" class="btn ghost small" title="Yakınlaş">+</button>
+      <button type="button" id="daw-after" class="btn ghost small" title="Seçili ilk heceden sonraki bütün heceleri de seç">→ Sonrakileri de seç</button>
+      <button type="button" id="daw-undo" class="btn ghost small" title="Geri al (⌘/Ctrl+Z)">↶ Geri al</button>
+      <button type="button" id="daw-auto" class="btn ghost small" title="Heceler yeniden kendiliğinden yerleşsin">Otomatik yerleştir</button>
+      <span class="daw-spacer"></span>
+      <button type="button" id="daw-save" class="btn primary small" disabled>💾 Kaydet</button>
+      <button type="button" id="daw-close" class="icon-btn" aria-label="Kapat">✕</button>
+    </div>
+    <div id="daw-scroll" class="daw-scroll"></div>
+    <div id="daw-tray" class="daw-tray hidden"></div>
+    <div class="daw-foot"><span id="daw-info" class="small"></span> <span id="daw-msg" class="small daw-msg"></span></div>
+    <div id="daw-hidden" class="hidden" aria-hidden="true"></div>
   </dialog>
 
   <div id="playerbar" class="playerbar hidden" role="region" aria-label="Oynatıcı">
@@ -356,6 +363,8 @@
 
   <script src="score-model.js"></script>
   <script src="lyrics-layout.js"></script>
+  <script src="timeline.js"></script>
   <script src="app.js"></script>
+  <script src="daw.js"></script>
 </body>
 </html>
