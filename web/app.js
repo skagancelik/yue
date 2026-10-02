@@ -869,144 +869,15 @@ function loadAbcjs() {
   return abcjsLoading;
 }
 
-const score = { job: null, abc: "", tune: null, synth: null, timer: null, audio: null, words: null };
+const score = { job: null, abc: "", tune: null, synth: null, timer: null, audio: null, words: null, layout: null, placing: false, placeNote: null };
 
 // ---- lyrics under the notes
-// YuE2 does not report which syllable it sang on which note, so this is an estimate: the lyrics
-// are split into Turkish syllables and laid on the vocal notes one by one, section by section
-// ([Verse] on the score's "% verse" part, …). It is right when the syllable counts match the melody.
+// An estimate for looking and checking only (YuE2 lays the syllables out itself, see
+// lyrics-layout.js). Where each lyric section starts and which notes hold or double a syllable
+// is saved per arrangement.
 
-const VOWELS = "aeıioöuüâîûAEIİOÖUÜÂÎÛ";
-const isLetter = (ch) => /\p{L}/u.test(ch);
-
-// Turkish syllables: every syllable has one vowel; one consonant between vowels starts the next
-// syllable, of two or more only the last one does ("gel-mek", "kork-mak", "a-ra-ba").
-function syllables(word) {
-  const letters = [...word].map((ch, i) => ({ ch, i })).filter((x) => isLetter(x.ch));
-  const vowels = letters.map((x, k) => (VOWELS.includes(x.ch) ? k : -1)).filter((k) => k >= 0);
-  if (vowels.length < 2) return [word];
-  const cuts = [];
-  for (let v = 1; v < vowels.length; v++) {
-    const between = vowels[v] - vowels[v - 1] - 1;
-    cuts.push(letters[vowels[v] - (between === 0 ? 0 : 1)].i);
-  }
-  const chars = [...word];
-  return [0, ...cuts].map((start, k) => chars.slice(start, cuts[k] ?? chars.length).join(""));
-}
-
-const sectionName = (text) => text.toLowerCase().replace(/[^a-z]/g, "");
-
-// [{ name, syllables: [{ text, joined }] }]; joined = the next syllable is in the same word.
-function lyricSections(lyrics) {
-  const sections = [];
-  let current = null;
-  for (const raw of (lyrics || "").split(/\r?\n/)) {
-    const tag = raw.trim().match(/^\[([^\]]+)\]$/);
-    if (tag) { current = { name: sectionName(tag[1]), syllables: [] }; sections.push(current); continue; }
-    // Characters that mean something on an ABC w: line are dropped.
-    const words = raw.replace(/[-_*~|%\\]/g, " ").split(/\s+/).filter((w) => [...w].some(isLetter));
-    if (!words.length) continue;
-    if (!current) { current = { name: "", syllables: [] }; sections.push(current); }
-    for (const word of words) {
-      const parts = syllables(word);
-      parts.forEach((text, k) => current.syllables.push({ text, joined: k < parts.length - 1 }));
-    }
-  }
-  return sections.filter((section) => section.syllables.length);
-}
-
-// The notes and rests of one ABC music line, in the order abcjs pairs them with w: tokens.
-// starts is false for the held continuation of a tie; at is the note's position in the line.
-function noteSlots(line) {
-  const token = /"[^"]*"|\[[A-Za-z]:[^\]]*\]|!.*?!|(?:\^\^|__|\^|_|=)?([A-Ga-gzxZX])[,']*[0-9]*\/*[0-9]*(-?)/g;
-  const slots = [];
-  let tied = false, match;
-  while ((match = token.exec(line))) {
-    if (!match[1]) continue;
-    if ("zxZX".includes(match[1])) { tied = false; slots.push({ rest: true }); continue; }
-    slots.push({ starts: !tied, at: match.index });
-    tied = match[2] === "-";
-  }
-  return slots;
-}
-
-// Returns the ABC with a w: line under every vocal line, how many syllables found a note, and
-// where each vocal note is in the returned text (to know which note was clicked). Vocal notes
-// are numbered from 0; the lyrics start on note `start` (a wordless hummed intro comes before it).
-function abcWithLyrics(abc, lyrics, start = 0) {
-  const lines = abc.split(/\r?\n/);
-  const parts = [];   // vocal lines grouped by score section: { name, lines: [{ index, slots }] }
-  let body = false, voice = "", part = null, comment = "";
-  lines.forEach((line, index) => {
-    if (!body) { if (/^K:/.test(line)) body = true; return; }
-    const section = line.match(/^%\s*(.+)$/);
-    if (section) { comment = sectionName(section[1]); part = null; return; }
-    const voiceLine = line.match(/^V:\s*(\S+)/);
-    if (voiceLine) { voice = voiceLine[1]; return; }
-    if (/^[A-Za-z]:/.test(line) || !line.trim() || voice.toLowerCase() !== "vocal") return;
-    const slots = noteSlots(line);
-    if (!slots.some((slot) => slot.starts)) return;
-    if (!part) { part = { name: comment, lines: [] }; parts.push(part); }
-    part.lines.push({ index, slots });
-  });
-  let number = -1;
-  for (const part of parts) for (const line of part.lines) for (const slot of line.slots) {
-    if (slot.rest) continue;
-    if (slot.starts) number++;
-    slot.number = number;   // a tie continuation shares the number of its note
-  }
-  const sections = lyricSections(lyrics);
-  const total = sections.reduce((sum, section) => sum + section.syllables.length, 0);
-  if (!parts.length || !total) return { abc, placed: 0, total, notes: [] };
-
-  // Lyric sections go on score sections of the same name, in order; without matching names
-  // everything is laid out from the first vocal note.
-  const plan = [];   // [score part, syllables]
-  let next = 0;
-  const named = sections.every((section) => section.name) && parts.some((p) => p.name);
-  for (const section of sections) {
-    const found = named ? parts.findIndex((p, k) => k >= next && p.name === section.name) : -1;
-    if (found < 0) { plan.length = 0; break; }
-    plan.push([parts[found], section.syllables]);
-    next = found + 1;
-  }
-  if (!plan.length) {
-    const all = sections.flatMap((section) => section.syllables);
-    plan.push([{ lines: parts.flatMap((p) => p.lines) }, all]);
-  }
-
-  const wLines = new Map();
-  let placed = 0;
-  for (const [target, sylls] of plan) {
-    let k = 0;
-    for (const { index, slots } of target.lines) {
-      // A syllable skips rests on its own, but a * lands on whatever comes next, rest or not:
-      // a rest before a skipped note needs its own *.
-      const tokens = slots.map((slot) => {
-        if (slot.rest) return null;
-        const syl = slot.starts && slot.number >= start && sylls[k++];
-        return syl ? syl.text + (syl.joined ? "-" : " ") : "* ";
-      });
-      const out = tokens.map((token, n) => {
-        if (token !== null) return token;
-        const next = tokens.slice(n + 1).find((t) => t !== null);
-        return next === "* " ? "* " : "";
-      });
-      wLines.set(index, "w: " + out.join("").trim());
-    }
-    placed += Math.min(k, sylls.length);
-  }
-  const slotsByLine = new Map(parts.flatMap((p) => p.lines).map((line) => [line.index, line.slots]));
-  const result = [];
-  const notes = [];   // { from, number }: char position in the returned ABC
-  let offset = 0;
-  lines.forEach((line, index) => {
-    for (const slot of slotsByLine.get(index) || []) if (!slot.rest) notes.push({ from: offset + slot.at, number: slot.number });
-    result.push(line);
-    offset += line.length + 1;
-    if (wLines.has(index)) { result.push(wLines.get(index)); offset += wLines.get(index).length + 1; }
-  });
-  return { abc: result.join("\n"), placed, total, notes };
+function layLyrics() {
+  score.words = LyricsLayout.layOut(score.abc, score.job.lyrics, score.layout);
 }
 
 function stopScore() {
@@ -1020,15 +891,23 @@ function stopScore() {
 
 function drawScore() {
   stopScore();
-  const withLyrics = $("score-lyrics").checked && score.words.placed > 0;
+  const { placed, total, count } = score.words;
+  const withLyrics = $("score-lyrics").checked && total > 0 && count > 0 && (placed > 0 || score.placing);
+  if (!withLyrics && score.placing) setPlacing(false);
+  // Redrawing empties the paper for a moment; keep its height and the scroll where the user works.
+  const wrap = document.querySelector(".score-wrap");
+  const paper = $("score-paper");
+  const top = wrap.scrollTop;
+  paper.style.minHeight = paper.offsetHeight + "px";
   // One SVG per staff line, so the PDF can break pages between lines.
   score.tune = ABCJS.renderAbc("score-paper", withLyrics ? score.words.abc : score.abc, {
-    responsive: "resize", add_classes: true, oneSvgPerLine: true, clickListener: pickStart,
+    responsive: "resize", add_classes: true, oneSvgPerLine: true, clickListener: placeClick,
     paddingleft: 16, paddingright: 16, paddingtop: 12, paddingbottom: 12,
     // Short sixteenth notes need room for their syllables: two bars to a line.
     staffwidth: 900, wrap: { minSpacing: 1.8, maxSpacing: 2.7, preferredMeasuresPerLine: 2 },
   })[0];
-  const { placed, total } = score.words;
+  paper.style.minHeight = "";
+  wrap.scrollTop = top;
   let status = score.job.edited_score
     ? "Bestenin düzeltilmiş notası (YuE2'ye verilen nota). Akor içermez."
     : "Besteden çıkarılan melodi (YuE2'ye verilen nota). Akor içermez.";
@@ -1036,40 +915,186 @@ function drawScore() {
   else if (withLyrics) status += ` Sözler tahmini yerleştirildi: ${placed}/${total} hece bir notaya denk geldi.`;
   $("score-status").textContent = status;
   $("score-lyrics").disabled = !total;
-  $("score-pick").classList.toggle("hidden", !withLyrics);
-  $("score-pick-reset").classList.toggle("hidden", !withLyrics || !score.job.lyrics_start);
-  setPicking(false);
+  $("score-place").classList.toggle("hidden", !withLyrics);
+  $("score-place-reset").classList.toggle("hidden", !withLyrics || LyricsLayout.isEmpty(score.layout));
+  renderSyllableCheck(withLyrics);
+  markPlacement();
+  renderPlacePanel();
 }
 $("score-lyrics").addEventListener("change", () => { if (score.words) drawScore(); });
 
-// Picking the note the lyrics start on: the next click on a vocal note sets it.
-function setPicking(on) {
-  score.picking = on;
+// Syllables against notes, section by section: a syllable that finds no note means the lyrics
+// have more syllables than the melody there, which is worth fixing in the lyrics (YuE2 reads those).
+function renderSyllableCheck(show) {
+  const sections = score.words.sections;
+  $("score-syll").classList.toggle("hidden", !show || !sections.length);
+  if (!show) return;
+  const head = document.createElement("div");
+  head.className = "muted";
+  head.textContent = "Hece kontrolü (yalnızca görüntü; YuE2 heceleri kendisi dağıtır, sözdeki hece sayısı ise modele gider):";
+  $("score-syll").replaceChildren(head, ...sections.map((section, k) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "syll-row";
+    const where = section.start < score.words.count ? `başlangıç ölçü ${section.bar + 1}` : "nota kalmadı";
+    const missing = section.count - section.placed;
+    const verdict = missing ? `⚠ ${missing} hece notaya sığmadı` : section.spare ? `${section.spare} nota hecesiz kaldı` : "✓";
+    row.classList.toggle("warn", missing > 0);
+    row.textContent = `[${section.tag || "söz"}] «${section.first}…» · ${where}${section.auto ? "" : " 📌"} · ${section.count} hece · ${verdict}`;
+    row.title = "Bu bölümün ilk notasını seç";
+    row.onclick = () => {
+      if (section.start >= score.words.count) return;
+      if (!score.placing) setPlacing(true);
+      pickPlaceNote(section.start, k);
+    };
+    return row;
+  }));
+}
+
+function setPlacing(on) {
+  score.placing = on;
+  if (!on) score.placeNote = null;
   $("score-paper").classList.toggle("picking", on);
-  $("score-pick").textContent = on ? "Vazgeç" : "✎ Sözlerin başladığı notayı seç";
-  $("score-pick-hint").classList.toggle("hidden", !on);
-  $("score-pick-hint").textContent = "İlk hecenin söylendiği notaya tıkla. Ondan önceki notalar (sözsüz giriş, mırıldanma) boş kalır.";
+  $("score-place").textContent = on ? "✓ Yerleştirmeyi bitir" : "✎ Heceleri yerleştir";
+  $("score-place-panel").classList.toggle("hidden", !on);
+  $("score-place-help").classList.toggle("hidden", !on);
+  $("score-place-msg").textContent = "";
 }
-$("score-pick").addEventListener("click", () => setPicking(!score.picking));
+$("score-place").addEventListener("click", () => { setPlacing(!score.placing); drawScore(); });
 
-async function saveLyricsStart(start) {
-  const job = score.job;
-  job.lyrics_start = start;
-  score.words = abcWithLyrics(score.abc, job.lyrics, start);
-  drawScore();
-  try {
-    const updated = await api(`/jobs/${job.id}`, { method: "PATCH", body: JSON.stringify({ lyrics_start: start }) });
-    jobs = jobs.map((j) => (j.id === updated.id ? updated : j));
-  } catch (error) { $("score-status").textContent = `Başlangıç kaydedilemedi: ${error.message}`; }
-}
-$("score-pick-reset").addEventListener("click", () => saveLyricsStart(0));
+$("score-place-reset").addEventListener("click", () => {
+  if (!confirm("Bütün bölümler yeniden otomatik yerleşsin, uzatma ve iki hece işaretleri silinsin mi?")) return;
+  applyLayout(LyricsLayout.normalize(null));
+});
 
-function pickStart(element) {
-  if (!score.picking || !element || element.el_type !== "note") return;
+// The vocal note under a click on the drawn score.
+function placeClick(element) {
+  if (!score.placing || !element || element.el_type !== "note") return;
   const note = score.words.notes.find((n) => n.from >= element.startChar && n.from < element.endChar);
-  if (!note) { $("score-pick-hint").textContent = "Bu bir vokal notası değil; üstteki Vocal satırından bir notaya tıkla."; return; }
-  saveLyricsStart(note.number);
+  if (!note) { $("score-place-msg").textContent = "Bu bir vokal notası değil; Vocal satırından bir notaya tıkla."; return; }
+  pickPlaceNote(note.number);
 }
+
+function pickPlaceNote(number, section) {
+  score.placeNote = number;
+  // The section to move: the one sung on this note, else the next one to start after it.
+  const slot = score.words.slots[number];
+  const sections = score.words.sections;
+  const next = sections.findIndex((s) => s.start > number);
+  $("score-place-msg").textContent = "";
+  renderPlacePanel(section ?? (slot ? slot.section : next >= 0 ? next : sections.length - 1));
+  markPlacement(true);
+}
+
+// Colours in placing mode: the picked note red, held notes blue, notes without a syllable grey.
+function markPlacement(scroll = false) {
+  const paper = $("score-paper");
+  for (const name of ["abcjs-selected-note", "abcjs-lyric-hold", "abcjs-lyric-empty"]) {
+    paper.querySelectorAll("." + name).forEach((node) => node.classList.remove(name));
+  }
+  if (!score.placing || !score.tune) return;
+  const { notes, slots, sections } = score.words;
+  const byFrom = new Map(notes.map((n) => [n.from, n]));
+  const firstSung = sections.length ? sections[0].start : Infinity;
+  let picked = null;
+  for (const line of score.tune.lines || []) for (const staff of line.staff || []) for (const voice of staff.voices || []) {
+    for (const element of voice) {
+      const note = byFrom.get(element.startChar);
+      if (!note) continue;
+      const slot = slots[note.number];
+      const name = note.number === score.placeNote ? "abcjs-selected-note"
+        : slot && slot.hold ? "abcjs-lyric-hold"
+        : !slot && note.starts && note.number >= firstSung ? "abcjs-lyric-empty" : "";
+      if (!name) continue;
+      for (const node of (element.abselem && element.abselem.elemset) || []) node.classList.add(name);
+      if (name === "abcjs-selected-note" && !picked) picked = element.abselem.elemset[0];
+    }
+  }
+  if (scroll && picked) picked.scrollIntoView({ block: "nearest" });
+}
+
+function renderPlacePanel(section) {
+  if (!score.placing) return;
+  const { slots, sections, notes, count } = score.words;
+  const n = score.placeNote;
+  const select = $("score-place-section");
+  const keep = section ?? Number(select.value || 0);
+  select.replaceChildren(...sections.map((s, k) => new Option(`${k + 1}. [${s.tag || "söz"}] «${s.first}…»${s.auto ? "" : " 📌"}`, String(k))));
+  select.value = String(Math.min(keep, sections.length - 1));
+  document.getElementById("score-place-tools").style.visibility = n == null ? "hidden" : "";
+  if (n == null) { $("score-place-info").textContent = "Bir vokal notasına tıkla."; return; }
+  const slot = slots[n];
+  const bar = notes.find((x) => x.number === n).bar;
+  const what = !slot ? "hece yok" : slot.hold ? "önceki hece uzuyor" : slot.double ? `iki hece «${slot.text.replace("~", " ")}»` : `hece «${slot.text}»`;
+  const owner = slot ? ` · [${sections[slot.section].tag || "söz"}]` : "";
+  $("score-place-info").textContent = `Seçili: vokal notası ${n + 1}/${count} · ölçü ${bar + 1}${owner} · ${what}`;
+  $("score-place-tools").querySelector('[data-place="hold"]').classList.toggle("on", !!(slot && slot.hold));
+  $("score-place-tools").querySelector('[data-place="double"]').classList.toggle("on", !!(slot && slot.double));
+  $("score-place-tools").querySelector('[data-place="auto"]').disabled = sections[select.value].auto;
+}
+$("score-place-section").addEventListener("change", () => renderPlacePanel());
+
+let layoutSave = null;
+function applyLayout(layout) {
+  score.layout = layout;
+  layLyrics();
+  drawScore();
+  const job = score.job;
+  const saved = LyricsLayout.compact(layout);
+  job.lyrics_layout = LyricsLayout.isEmpty(saved) ? null : saved;
+  job.lyrics_start = null;
+  clearTimeout(layoutSave);
+  layoutSave = setTimeout(async () => {
+    try {
+      const updated = await api(`/jobs/${job.id}`, { method: "PATCH", body: JSON.stringify({ lyrics_layout: job.lyrics_layout, lyrics_start: null }) });
+      jobs = jobs.map((j) => (j.id === updated.id ? updated : j));
+    } catch (error) { $("score-place-msg").textContent = `Yerleşim kaydedilemedi: ${error.message}`; }
+  }, 600);
+}
+
+function placeAction(name) {
+  const n = score.placeNote;
+  if (!score.placing || n == null) return;
+  const words = score.words;
+  if (name === "prev" || name === "next") {
+    const to = n + (name === "next" ? 1 : -1);
+    if (to >= 0 && to < words.count) pickPlaceNote(to);
+    return;
+  }
+  const k = Number($("score-place-section").value);
+  let layout = score.layout;
+  if (name === "start") {
+    layout = LyricsLayout.setStart(layout, words, k, n);
+    if (typeof layout === "string") { $("score-place-msg").textContent = layout; return; }
+  } else if (name === "auto") layout = LyricsLayout.clearStart(layout, k);
+  else {
+    // A mark that would change nothing is not kept.
+    const kind = name === "hold" ? "holds" : "doubles";
+    layout = LyricsLayout.toggle(layout, kind, n);
+    const slot = layout[kind].includes(n) && LyricsLayout.layOut(score.abc, score.job.lyrics, layout).slots[n];
+    if (layout[kind].includes(n) && !(slot && (kind === "holds" ? slot.hold : slot.double))) {
+      $("score-place-msg").textContent = kind === "holds"
+        ? "Burada uzatılacak bir hece yok (bölümün ilk notası ya da hecesiz bir notadan sonra)."
+        : "Bu notaya ikinci bir hece kalmadı.";
+      return;
+    }
+  }
+  applyLayout(layout);
+  pickPlaceNote(n, name === "start" || name === "auto" ? k : undefined);
+}
+
+for (const button of document.querySelectorAll("#score-place-tools [data-place]")) {
+  button.addEventListener("click", () => placeAction(button.dataset.place));
+}
+
+// Keys while placing: arrows move between vocal notes, U holds the syllable before, 2 doubles.
+$("score-modal").addEventListener("keydown", (event) => {
+  if (!score.placing || score.edit || /^(INPUT|SELECT|TEXTAREA)$/.test(event.target.tagName)) return;
+  const name = { ArrowLeft: "prev", ArrowRight: "next", u: "hold", U: "hold", "2": "double" }[event.key];
+  if (!name) return;
+  event.preventDefault();
+  placeAction(name);
+});
 
 function setScoreButtons(ready) {
   for (const id of ["score-play", "score-print", "score-midi"]) $(id).disabled = !ready;
@@ -1091,14 +1116,15 @@ function setEditing(on) {
   $("score-reset").classList.toggle("hidden", !on || !(scoreSource() || {}).score_edited);
   for (const id of ["score-edit", "score-print", "score-midi", "score-abc"]) $(id).classList.toggle("hidden", on);
   $("score-lyrics").closest(".score-tools").classList.toggle("hidden", on);
-  if (!on) { score.edit = null; $("score-pick-hint").classList.add("hidden"); }
+  if (on) $("score-syll").classList.add("hidden");
+  if (!on) score.edit = null;
 }
 
 $("score-edit").addEventListener("click", async () => {
   const item = scoreSource();
   if (!item) return;
   stopScore();
-  setPicking(false);
+  setPlacing(false);
   let abc = score.abc, origin = "bu düzenlemenin notası";
   try {
     if (item.score_url) {
@@ -1219,7 +1245,7 @@ function renderNotePanel() {
   const note = selectedNote();
   // The panel always keeps its place, so picking a note does not push the score down under the cursor.
   $("score-note").classList.remove("hidden");
-  document.querySelector(".score-note-tools").style.visibility = note ? "" : "hidden";
+  document.querySelector("#score-note .score-note-tools").style.visibility = note ? "" : "hidden";
   if (!note) { $("score-note-info").textContent = "Perdesini ya da süresini değiştirmek için bir notaya tıkla."; return; }
   const where = `${pick.voice === "vocal" ? "Vokal" : "Enstrüman"}, ölçü ${pick.bar + 1}`;
   const tied = note.tieOut || note.contIn ? " · ölçü çizgisinin üzerinden bağlı" : "";
@@ -1331,8 +1357,8 @@ function renderCompare() {
   const item = scoreSource();
   const lyrics = (item && item.lyrics) || score.job.lyrics || "";
   const sung = ScoreModel.sections(score.edit.model).filter((run) => run.sung);
-  const scoreNames = sung.map((run) => sectionName(run.label || ""));
-  const lyricNames = lyricSections(lyrics).map((section) => section.name);
+  const scoreNames = sung.map((run) => LyricsLayout.sectionName(run.label || ""));
+  const lyricNames = LyricsLayout.lyricSections(lyrics).map((section) => section.name);
   const line = (label, names) => {
     const p = document.createElement("div");
     p.textContent = `${label}: ${names.length ? names.join(" → ") : "—"}`;
@@ -1398,7 +1424,7 @@ $("score-undo").addEventListener("click", () => {
 
 function leaveEdit() {
   setEditing(false);
-  score.words = abcWithLyrics(score.abc, score.job.lyrics, score.job.lyrics_start || 0);
+  layLyrics();
   drawScore();
   setScoreButtons(true);
 }
@@ -1446,6 +1472,7 @@ $("score-reset").addEventListener("click", async () => {
 async function openScore(job) {
   stopScore();
   setEditing(false);
+  setPlacing(false);
   score.job = job;
   score.abc = "";
   score.tune = null;
@@ -1461,7 +1488,8 @@ async function openScore(job) {
     const abc = await response.text();
     if (score.job !== job) return;   // another score was opened meanwhile
     score.abc = score.jobAbc = abc;
-    score.words = abcWithLyrics(abc, job.lyrics, job.lyrics_start || 0);
+    score.layout = LyricsLayout.normalize(job.lyrics_layout, job.lyrics_start);
+    layLyrics();
     drawScore();
     setScoreButtons(true);
   } catch (error) {

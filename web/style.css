@@ -302,7 +302,6 @@ a.menu-item { text-decoration: none; display: block; }
 .score-modal .modal-actions { flex-wrap: wrap; }
 .score-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 10px; }
 .score-lyrics-check { margin: 0 8px 0 0; }
-.pick-hint { margin: 0 0 10px; color: var(--accent); }
 .score-paper.picking { cursor: crosshair; }
 .score-paper.picking .abcjs-note:hover { fill: var(--accent); }
 .score-editor { margin: 0 0 10px; display: grid; gap: 8px; }
@@ -321,6 +320,17 @@ a.menu-item { text-decoration: none; display: block; }
 .score-note { display: grid; gap: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
 .score-note-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .score-note-tools .btn { padding: 5px 10px; }
+.score-place-help { margin: 0 0 8px; }
+/* Stays in view while scrolling down the score. */
+.score-place { margin: 0 0 10px; position: sticky; top: 0; z-index: 2; }
+.score-place .small-select { max-width: 100%; }
+.toggle-btn.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.score-syll { display: grid; gap: 2px; margin: 0 0 10px; }
+.syll-row { text-align: left; background: none; border: 0; padding: 2px 0; color: var(--text); font: inherit; cursor: pointer; }
+.syll-row:hover { color: var(--accent); }
+.syll-row.warn { color: var(--warn); }
+.score-paper .abcjs-lyric-hold { fill: #1f6feb; }
+.score-paper .abcjs-lyric-empty { fill: #9a9a9a; }
 
 /* ---- player bar ---- */
 body.has-player { padding-bottom: 88px; }

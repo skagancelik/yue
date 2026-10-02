@@ -233,7 +233,7 @@ def public_job(job):
     out = {k: job.get(k) for k in (
         "id", "group", "title", "style", "lyrics", "seed", "status", "stage", "message", "error",
         "created_at", "started_at", "finished_at", "duration", "source_name", "tokens", "variant",
-        "upload_key", "folder_id", "source_id", "stems_status", "stems_message", "stems_error", "lyrics_start")}
+        "upload_key", "folder_id", "source_id", "stems_status", "stems_message", "stems_error", "lyrics_start", "lyrics_layout")}
     out["edited_score"] = bool(job.get("score_key"))   # made from the source's corrected score
     out["liked"] = bool(job.get("liked"))
     out["note"] = job.get("note") or ""
@@ -416,6 +416,22 @@ def request_stems(job_id):
     return {"job": public_job(get_job(job_id)), "gpu": gpu_state}
 
 
+def validate_lyrics_layout(layout):
+    """Where the lyrics sit under the vocal notes in the score view (display only, YuE2 never sees it):
+    starts = the note each lyric section starts on (null = automatic), holds = notes that hold the
+    syllable before, doubles = notes that carry two syllables. Notes are numbered from 0."""
+    if layout is None:
+        return None
+    note = lambda n: isinstance(n, int) and not isinstance(n, bool) and 0 <= n < 100000
+    if (not isinstance(layout, dict) or set(layout) - {"starts", "holds", "doubles"}
+            or not all(isinstance(layout.get(k, []), list) and len(layout.get(k, [])) <= 5000 for k in ("starts", "holds", "doubles"))
+            or not all(n is None or note(n) for n in layout.get("starts", []))
+            or not all(note(n) for k in ("holds", "doubles") for n in layout.get(k, []))):
+        raise HttpError(400, "lyrics_layout geçersiz")
+    out = {k: layout.get(k, []) for k in ("starts", "holds", "doubles")}
+    return out if any(n is not None for k in out for n in out[k]) else None
+
+
 def update_job_fields(job_id, body):
     job = get_job(job_id)
     fields = {}
@@ -439,6 +455,8 @@ def update_job_fields(job_id, body):
         if start is not None and (not isinstance(start, int) or isinstance(start, bool) or not 0 <= start < 100000):
             raise HttpError(400, "lyrics_start 0 veya pozitif bir tam sayı olmalı")
         fields["lyrics_start"] = start or None
+    if "lyrics_layout" in body:
+        fields["lyrics_layout"] = validate_lyrics_layout(body["lyrics_layout"])
     if not fields:
         raise HttpError(400, "Değişiklik yok")
     # update_item, not put_item: the GPU agent writes progress to the same item concurrently.

@@ -36,7 +36,7 @@ jobs:
         run: |
           python3 -m py_compile api/handler.py worker/agent.py
           bash -n worker/setup.sh worker/boot.sh
-          node --check web/app.js
+          node --check web/app.js && node --check web/lyrics-layout.js
 
       - name: Terraform apply
         working-directory: infra
