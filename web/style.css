@@ -357,3 +357,4 @@ body.has-player { padding-bottom: 88px; }
   .job { grid-template-columns: 48px minmax(0, 1fr); }
   .art { display: grid; width: 48px; height: 48px; }
 }
+.score-place .score-sections { align-items: center; }

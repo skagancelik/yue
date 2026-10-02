@@ -265,7 +265,7 @@
         <button type="button" id="score-place" class="btn ghost small hidden" title="Bölümlerin başladığı notayı, uzayan ve iki heceli notaları işaretle">✎ Heceleri yerleştir</button>
       </div>
       <div id="score-place-panel" class="score-note score-place hidden">
-        <div id="score-place-sections" class="score-sections"></div>
+        <div class="score-sections"><span id="score-place-label" class="small muted"></span><span id="score-place-sections" class="score-sections"></span></div>
         <span id="score-place-info" class="small"></span>
         <div id="score-place-tools" class="score-note-tools">
           <button type="button" class="btn ghost small" data-place="prev" title="Önceki vokal notası (←)">◀</button>
@@ -273,7 +273,6 @@
           <button type="button" class="btn ghost small toggle-btn" data-place="hold" title="Bu notada yeni hece yok; önceki hece bu notaya da uzar (U)">Önceki hece uzasın</button>
           <button type="button" class="btn ghost small toggle-btn" data-place="double" title="Bu notada iki hece söylenir (2)">İki hece</button>
           <button type="button" class="btn ghost small" data-place="auto" title="Bölüm yeniden kendiliğinden yerleşsin">Otomatik başlasın</button>
-          <button type="button" class="btn ghost small" data-place="cancel" title="Esc">Vazgeç</button>
           <button type="button" id="score-place-reset" class="btn ghost small hidden" title="Bütün bölümler otomatik yerleşsin, işaretler silinsin">Sıfırla</button>
           <span id="score-place-msg" class="muted small"></span>
         </div>
