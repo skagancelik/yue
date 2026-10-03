@@ -558,6 +558,10 @@ def public_source(source):
         out["score_url"] = presign_get(source["score_key"])
     if source.get("transcript_key"):
         out["transcript_url"] = presign_get(source["transcript_key"])
+    # Every melody extraction, oldest first; the active one is the score the source is edited from.
+    out["transcripts"] = [{"id": v["id"], "at": int(v.get("at") or 0), "seconds": int(v["seconds"]) if v.get("seconds") is not None else None,
+                           "origin": v.get("origin") or "sheetsage", "url": presign_get(v["key"]),
+                           "active": v["key"] == source.get("transcript_key")} for v in transcript_versions(source)]
     out["has_score"] = bool(source.get("score_key") or source.get("transcript_key"))
     for key in ("transcribe_status", "transcribe_message", "transcribe_error", "transcribed_at", "lyrics_layout"):
         out[key] = source.get(key)
@@ -565,8 +569,19 @@ def public_source(source):
     return out
 
 
+def transcript_versions(source):
+    """Every melody extraction of a source, oldest first (the worker writes them; see agent.py). A
+    source from before versions has its one transcript as version v1."""
+    if source.get("transcripts"):
+        return list(source["transcripts"])
+    if source.get("transcript_key"):
+        return [{"id": "v1", "key": source["transcript_key"], "at": source.get("transcribed_at") or 0, "origin": "sheetsage"}]
+    return []
+
+
 def source_keys(source):
-    return [source[k] for k in ("key", "score_key", "transcript_key") if source.get(k)]
+    keys = [source[k] for k in ("key", "score_key", "transcript_key") if source.get(k)]
+    return list(dict.fromkeys(keys + [v["key"] for v in transcript_versions(source)]))
 
 
 def check_score(abc):
@@ -669,8 +684,24 @@ def reset_source_score(source_id):
 
 def update_source(source_id, body):
     """Save the style and lyrics that belong to a source song, so a new cover can start from them."""
-    get_item(source_id, SOURCES, "Beste bulunamadı")
+    source = get_item(source_id, SOURCES, "Beste bulunamadı")
     fields = {}
+    versions = transcript_versions(source)
+    drop_key = None
+    if "transcript" in body:
+        # Which extraction the source's score comes from.
+        chosen = next((v for v in versions if v["id"] == body["transcript"]), None)
+        if not chosen:
+            raise HttpError(400, "Nota sürümü bulunamadı")
+        fields["transcript_key"] = chosen["key"]
+    if "delete_transcript" in body:
+        doomed = next((v for v in versions if v["id"] == body["delete_transcript"]), None)
+        if not doomed:
+            raise HttpError(400, "Nota sürümü bulunamadı")
+        if doomed["key"] == fields.get("transcript_key", source.get("transcript_key")):
+            raise HttpError(400, "Kullanılan sürüm silinemez; önce başka bir sürüme geç")
+        fields["transcripts"] = [v for v in versions if v["id"] != doomed["id"]]
+        drop_key = doomed["key"]
     if "style" in body:
         fields["style"] = (validate_text(body, "style", 2000, required=False) or "")
     if "lyrics" in body:
@@ -696,6 +727,8 @@ def update_source(source_id, body):
     kwargs = {"ExpressionAttributeValues": {f":{k}": v for k, v in sets.items()}} if sets else {}
     table.update_item(Key={"id": source_id}, UpdateExpression=expression.strip(),
                       ExpressionAttributeNames={f"#{k}": k for k in fields}, **kwargs)
+    if drop_key:
+        s3.delete_object(Bucket=BUCKET, Key=drop_key)
     return public_source(get_item(source_id, SOURCES, "Beste bulunamadı"))
 
 

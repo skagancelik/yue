@@ -264,6 +264,9 @@ const ScoreModel = (() => {
         const notes = [];
         tokenize(bar[voice], units).forEach((token, k) => {
           if (token.rest) {
+            // Rests in a row are one silence (a rest of 5 is written z4z).
+            const last = notes[notes.length - 1];
+            if (last && last.rest) { last.dur += token.dur; last.to = token.to; return; }
             notes.push({ rest: true, dur: token.dur, from: token.from, to: token.to, tieOut: false, contIn: false });
             return;
           }
@@ -375,16 +378,29 @@ const ScoreModel = (() => {
       for (let b = sel.bar, n = note; n.contIn && get(b - 1); b--) { const prev = get(b - 1); n = prev[prev.length - 1]; Object.assign(n, { midi }, spell(midi, all[b - 1].key)); }
     } else if (op === "longer") {
       const next = notes[index + 1];
-      if (!next) throw new Error("Ölçünün son notası; sonraki ölçüye uzatılamaz");
-      const take = Math.min(step, next.dur);
-      next.dur -= take;
-      note.dur += take;
-      if (!next.dur) {
-        if (!next.rest && next.tieOut) {
-          if (!note.rest && note.midi === next.midi) note.tieOut = true;
-          else cutTieOut(next, sel.bar);
+      if (!next) {
+        // Over the barline: the note goes on, tied, into the rest the next bar starts with.
+        if (note.rest) throw new Error("Sus sonraki ölçüye uzatılamaz");
+        if (note.tieOut) throw new Error("Nota zaten sonraki ölçüye bağlı; uzatmayı orada yap");
+        const following = get(sel.bar + 1);
+        if (!following) throw new Error("Son ölçü; daha fazla uzatılamaz");
+        if (!following[0].rest) throw new Error("Sonraki ölçü notayla başlıyor; önce onu kısalt ya da sus yap");
+        const take = Math.min(step, following[0].dur);
+        following[0].dur -= take;
+        if (!following[0].dur) following.splice(0, 1);
+        following.unshift({ ...note, dur: take, contIn: true, tieOut: false });
+        note.tieOut = true;
+      } else {
+        const take = Math.min(step, next.dur);
+        next.dur -= take;
+        note.dur += take;
+        if (!next.dur) {
+          if (!next.rest && next.tieOut) {
+            if (!note.rest && note.midi === next.midi) note.tieOut = true;
+            else cutTieOut(next, sel.bar);
+          }
+          notes.splice(index + 1, 1);
         }
-        notes.splice(index + 1, 1);
       }
     } else if (op === "shorter") {
       if (note.dur <= step) throw new Error("Daha fazla kısaltılamaz; sus yapmayı ya da silmeyi dene");
@@ -408,6 +424,20 @@ const ScoreModel = (() => {
         for (let k = Math.min(i, list.length - 1); k >= 0; k--) if (!list[k].rest) { midi = list[k].midi; break; }
       }
       notes[index] = setPitch({ rest: false, dur: note.dur, tieOut: false, contIn: false }, midi === null ? 71 : midi);
+    } else if (op === "place") {
+      // A new note inside a rest: arg.offset units after the rest starts, arg.dur long (as much as
+      // the rest has room for), at arg.midi.
+      if (!note.rest) throw new Error("Burada zaten nota var");
+      const offset = arg.offset || 0;
+      const dur = Math.min(arg.dur || step, note.dur - offset);
+      if (offset < 0 || dur <= 0) throw new Error("Nota bu susun içine sığmıyor");
+      if (arg.midi < 36 || arg.midi > 96) throw new Error("Bu perde nota aralığının dışında");
+      const parts = [];
+      if (offset) parts.push({ rest: true, dur: offset, tieOut: false, contIn: false });
+      parts.push(setPitch({ rest: false, dur, tieOut: false, contIn: false }, arg.midi));
+      if (note.dur - offset - dur) parts.push({ rest: true, dur: note.dur - offset - dur, tieOut: false, contIn: false });
+      notes.splice(index, 1, ...parts);
+      if (offset) index++;
     } else if (op === "split") {
       if (note.dur < 2) throw new Error("Bu nota bölünemeyecek kadar kısa");
       const first = Math.ceil(note.dur / 2);

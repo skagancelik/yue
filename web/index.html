@@ -186,6 +186,7 @@
       <div class="source-actions">
         <button type="button" class="btn ghost small use">Bununla düzenle</button>
         <button type="button" class="btn ghost small score-act hidden"></button>
+        <button type="button" class="btn ghost small retranscribe hidden" title="Melodiyi yeniden notaya çevir; önceki çıkarmalar sürüm olarak kalır">🎼 Yeniden çıkar</button>
         <button type="button" class="btn ghost small edit-text">Stil, söz, not</button>
         <button type="button" class="btn ghost small danger remove">Sil</button>
       </div>
@@ -304,6 +305,10 @@
       <span class="daw-spacer"></span>
       <button type="button" id="daw-preview" class="btn ghost small" title="Bu hazırlıktan YuE2'ye gidecek stil, söz ve notayı gör">👁 YuE2'ye gidecekler</button>
       <span id="daw-origin" class="muted small"></span>
+      <span id="daw-versions" class="daw-versions hidden">
+        <select id="daw-version" class="small-select" aria-label="Nota sürümü" title="Bu bestenin nota çıkarmaları: hangisinden düzenleneceğini seç"></select>
+        <button type="button" id="daw-version-delete" class="icon-btn" title="Seçili sürümü sil (kullanılan sürüm silinemez)">🗑</button>
+      </span>
       <button type="button" id="daw-reset" class="btn ghost small hidden" title="Bestenin düzeltilmiş notasını sil; yeni düzenlemeler melodiyi yine kayıttan çıkarır">Özgün notaya dön</button>
       <button type="button" id="daw-save" class="btn primary small" disabled>💾 Kaydet</button>
       <button type="button" id="daw-close" class="icon-btn" aria-label="Kapat">✕</button>

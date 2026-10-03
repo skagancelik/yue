@@ -338,6 +338,43 @@ def process(job):
         touch()
 
 
+MAX_TRANSCRIPTS = 20
+
+
+def transcript_versions(source):
+    """Every melody extraction of a source, oldest first: [{id, key, at, seconds?, origin}]. A source
+    from before versions has its one transcript as version v1."""
+    if source.get("transcripts"):
+        return list(source["transcripts"])
+    if source.get("transcript_key"):
+        return [{"id": "v1", "key": source["transcript_key"], "at": int(source.get("transcribed_at") or 0), "origin": "sheetsage"}]
+    return []
+
+
+def save_transcript(source, path, origin, seconds=None):
+    """Upload one extraction as a new version and make it the source's score to edit. The oldest
+    versions beyond MAX_TRANSCRIPTS go (never the new one). False when the source is gone."""
+    source_id = source["id"]
+    version = f"{time.strftime('%Y%m%d-%H%M%S', time.gmtime())}-{uuid.uuid4().hex[:6]}"
+    key = f"sources/{source_id}.transcripts/{version}.abc"
+    s3.upload_file(str(path), BUCKET, key, ExtraArgs={"ContentType": "text/plain; charset=utf-8"})
+    entry = {"id": version, "key": key, "at": now(), "origin": origin}
+    if seconds is not None:
+        entry["seconds"] = int(seconds)
+    versions = transcript_versions(source) + [entry]
+    dropped, versions = versions[:-MAX_TRANSCRIPTS], versions[-MAX_TRANSCRIPTS:]
+    fields = {"transcript_key": key, "transcripts": versions, "transcribed_at": now(),
+              "transcribe_status": "succeeded", "transcribe_message": "Hazır"}
+    if seconds is not None:
+        fields["transcribe_seconds"] = int(seconds)
+    if not update_source(source_id, **fields):
+        s3.delete_object(Bucket=BUCKET, Key=key)   # the source was deleted meanwhile
+        return False
+    for old in dropped:
+        s3.delete_object(Bucket=BUCKET, Key=old["key"])
+    return True
+
+
 def keep_transcript(source_id, abc):
     """A cover made straight from the recording transcribed it inside YuE2-Turbo: its score is that
     transcription, so it becomes the source's score to edit (unless the source already has one)."""
@@ -345,10 +382,7 @@ def keep_transcript(source_id, abc):
         source = table.get_item(Key={"id": source_id}).get("Item")
         if not source or source.get("transcript_key"):
             return
-        key = f"sources/{source_id}.transcript.abc"
-        s3.upload_file(str(abc), BUCKET, key, ExtraArgs={"ContentType": "text/plain; charset=utf-8"})
-        update_source(source_id, transcript_key=key, transcribed_at=now(), transcribe_status="succeeded",
-                      transcribe_message="Hazır")
+        save_transcript(source, abc, "cover")
     except Exception:
         traceback.print_exc()   # never fails the cover
 
@@ -391,11 +425,8 @@ def process_transcribe(task):
         text = out.read_text(encoding="utf-8")
         if "V: Vocal" not in text or "V: Ins" not in text:
             raise RuntimeError("SheetSage2 beklenen notayı üretmedi (Vocal/Ins sesleri yok)")
-        key = f"sources/{source_id}.transcript.abc"
-        s3.upload_file(str(out), BUCKET, key, ExtraArgs={"ContentType": "text/plain; charset=utf-8"})
-        if not update_source(source_id, transcript_key=key, transcribed_at=now(), transcribe_status="succeeded",
-                             transcribe_message="Hazır", transcribe_seconds=int(time.time() - started)):
-            s3.delete_object(Bucket=BUCKET, Key=key)   # the source was deleted meanwhile
+        # A new version each time; the earlier extractions stay (transcript_versions).
+        save_transcript(table.get_item(Key={"id": source_id}).get("Item") or source, out, "sheetsage", time.time() - started)
         update_job(task_id, status="succeeded", stage="done", message="Hazır", finished_at=now())
         log("transcribe done", source_id, f"{time.time() - started:.0f}s")
     except Exception as error:
