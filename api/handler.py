@@ -233,8 +233,13 @@ def public_job(job):
     out = {k: job.get(k) for k in (
         "id", "group", "title", "style", "lyrics", "seed", "status", "stage", "message", "error",
         "created_at", "started_at", "finished_at", "duration", "source_name", "tokens", "variant",
-        "upload_key", "folder_id", "source_id", "stems_status", "stems_message", "stems_error", "lyrics_start", "lyrics_layout")}
-    out["edited_score"] = bool(job.get("score_key"))   # made from the source's corrected score
+        "upload_key", "folder_id", "source_id", "stems_status", "stems_message", "stems_error", "lyrics_start", "lyrics_layout",
+        "style_base")}
+    # Where the score YuE2 got came from: "prepared" (laid out in the timeline and converted by the
+    # browser), "edited" (the source's corrected score), "transcript" (the source's saved transcription),
+    # or none (the recording was transcribed in the job). Older jobs with a score only had edited ones.
+    out["score_from"] = job.get("score_from") or ("edited" if job.get("score_key") else None)
+    out["edited_score"] = bool(job.get("score_key"))
     out["liked"] = bool(job.get("liked"))
     out["note"] = job.get("note") or ""
     if job.get("stems_status") == "succeeded":
@@ -314,11 +319,21 @@ def create_jobs(body):
     folder_id = validate_text(body, "folder_id", 32)
     source_id = validate_text(body, "source_id", 32, required=False)
     get_folder(folder_id)
-    score_key = None
+    score_key = score_text = score_from = None
+    if body.get("abc") is not None:
+        # The score the browser prepared from the timeline (lyrics laid on it, unsung bars given to the
+        # instrument, sections named after the lyrics). It goes to YuE2 as it is.
+        if not source_id:
+            raise HttpError(400, "Hazırlanmış nota yalnızca bir besteyle kullanılabilir")
+        check_score(body["abc"])
+        score_text, score_from = body["abc"], "prepared"
     if source_id:
         source = get_item(source_id, SOURCES, "Beste bulunamadı")
         upload_key, body["source_name"] = source["key"], source["name"]
-        score_key = source.get("score_key")   # a corrected score skips melody extraction
+        if score_text is None:
+            # A corrected score, else the saved transcription: either skips melody extraction.
+            score_key = source.get("score_key") or source.get("transcript_key")
+            score_from = "edited" if source.get("score_key") else "transcript" if score_key else None
     else:
         upload_key = validate_text(body, "upload_key", 200)
     if not re.fullmatch(r"(uploads|sources)/[0-9a-f]{32}\.[a-z0-9]+", upload_key):
@@ -326,6 +341,8 @@ def create_jobs(body):
     check_upload_size(upload_key)
     style = validate_text(body, "style", 2000)
     lyrics = validate_text(body, "lyrics", 16000)
+    style_base = validate_text(body, "style_base", 2000, required=False)
+    layout = validate_lyrics_layout(body.get("lyrics_layout"))
     title = validate_text(body, "title", 120, required=False) or "Adsız düzenleme"
     source_name = validate_text(body, "source_name", 200, required=False)
     auto_stems = body.get("stems", True)
@@ -357,11 +374,19 @@ def create_jobs(body):
         job["folder_id"] = folder_id
         if source_id:
             job["source_id"] = source_id
-        if score_key:
+        if score_key or score_text is not None:
             # A copy, so saving or resetting the source's score later does not change a queued job.
-            job["score_key"] = f"outputs/{job['id']}/input.abc"
-            s3.copy_object(Bucket=BUCKET, Key=job["score_key"], CopySource={"Bucket": BUCKET, "Key": score_key},
-                           ContentType="text/plain; charset=utf-8", MetadataDirective="REPLACE")
+            job["score_key"], job["score_from"] = f"outputs/{job['id']}/input.abc", score_from
+            if score_text is not None:
+                s3.put_object(Bucket=BUCKET, Key=job["score_key"], Body=score_text.encode("utf-8"),
+                              ContentType="text/plain; charset=utf-8")
+            else:
+                s3.copy_object(Bucket=BUCKET, Key=job["score_key"], CopySource={"Bucket": BUCKET, "Key": score_key},
+                               ContentType="text/plain; charset=utf-8", MetadataDirective="REPLACE")
+        if style_base and style_base != style:
+            job["style_base"] = style_base   # the style as written, before the tracks were added to it
+        if layout:
+            job["lyrics_layout"] = layout
         if not auto_stems:
             job["auto_stems"] = False
         if stop_after:
@@ -531,11 +556,17 @@ def public_source(source):
     out["score_updated_at"] = source.get("score_updated_at")
     if source.get("score_key"):
         out["score_url"] = presign_get(source["score_key"])
+    if source.get("transcript_key"):
+        out["transcript_url"] = presign_get(source["transcript_key"])
+    out["has_score"] = bool(source.get("score_key") or source.get("transcript_key"))
+    for key in ("transcribe_status", "transcribe_message", "transcribe_error", "transcribed_at", "lyrics_layout"):
+        out[key] = source.get(key)
+    out["tracks"] = source.get("tracks") or []
     return out
 
 
 def source_keys(source):
-    return [source[k] for k in ("key", "score_key") if source.get(k)]
+    return [source[k] for k in ("key", "score_key", "transcript_key") if source.get(k)]
 
 
 def check_score(abc):
@@ -569,8 +600,66 @@ def save_source_score(source_id, body):
     return public_source(get_item(source_id, SOURCES, "Beste bulunamadı"))
 
 
+def request_transcription(source_id, body):
+    """Queue SheetSage2 melody extraction of a source on its own, without making an arrangement.
+    The score is kept on the source (transcript_key) to be edited before anything is generated."""
+    source = get_item(source_id, SOURCES, "Beste bulunamadı")
+    stop_after = validate_flag(body, "stop_gpu", default=False)
+    if source.get("transcribe_status") in ("queued", "running"):
+        return {"source": public_source(source), "gpu": describe_gpu()["state"]}
+    created = now()
+    task = {"id": uuid.uuid4().hex, "owner": TASKS, "kind": "transcribe", "source_id": source_id,
+            "queue": "q", "status": "queued", "stage": "queued", "message": "Sırada",
+            "created_at": created * 1000, "updated_at": created}
+    if stop_after:
+        task["stop_after"] = True
+    table.put_item(Item=task)
+    table.update_item(Key={"id": source_id},
+                      UpdateExpression="SET transcribe_status = :q, transcribe_message = :m REMOVE transcribe_error",
+                      ExpressionAttributeValues={":q": "queued", ":m": "Sırada"})
+    gpu_state = ensure_gpu(quick=True)
+    return {"source": public_source(get_item(source_id, SOURCES, "Beste bulunamadı")), "gpu": gpu_state}
+
+
+TRACK_TEXT = {"id": 40, "instrument": 80, "text": 300}
+
+
+def validate_tracks(tracks):
+    """The arrangement tracks drawn in the timeline: which instrument plays how, and in which bars
+    (bars = [[from, to], ...], null for the whole song). The browser turns them into style text."""
+    if not isinstance(tracks, list) or len(tracks) > 16:
+        raise HttpError(400, "tracks geçersiz (en fazla 16 iz)")
+    out = []
+    for track in tracks:
+        if not isinstance(track, dict) or set(track) - {*TRACK_TEXT, "feel", "bars", "lead"}:
+            raise HttpError(400, "tracks geçersiz")
+        item = {}
+        for key, limit in TRACK_TEXT.items():
+            value = track.get(key, "")
+            if not isinstance(value, str) or len(value) > limit:
+                raise HttpError(400, f"iz alanı '{key}' geçersiz")
+            item[key] = value.strip()
+        feel = track.get("feel", [])
+        if not isinstance(feel, list) or len(feel) > 12 or not all(isinstance(f, str) and 0 < len(f) <= 40 for f in feel):
+            raise HttpError(400, "iz karakteri geçersiz")
+        bars = track.get("bars")
+        bar = lambda n: isinstance(n, int) and not isinstance(n, bool) and 0 <= n < 10000
+        if bars is not None and (not isinstance(bars, list) or len(bars) > 64 or not all(
+                isinstance(r, list) and len(r) == 2 and bar(r[0]) and bar(r[1]) and r[0] <= r[1] for r in bars)):
+            raise HttpError(400, "iz ölçüleri geçersiz")
+        lead = track.get("lead", False)
+        if not isinstance(lead, bool):
+            raise HttpError(400, "iz 'lead' true/false olmalı")
+        item.update(feel=feel, bars=bars, lead=lead)
+        if not item["instrument"]:
+            raise HttpError(400, "Her izin bir enstrümanı olmalı")
+        out.append(item)
+    return out
+
+
 def reset_source_score(source_id):
-    """Back to the transcription: new covers extract the melody from the recording again."""
+    """Back to the transcription: the saved one when there is one, else new covers extract the
+    melody from the recording again."""
     source = get_item(source_id, SOURCES, "Beste bulunamadı")
     if source.get("score_key"):
         s3.delete_object(Bucket=BUCKET, Key=source["score_key"])
@@ -592,6 +681,11 @@ def update_source(source_id, body):
         fields["note"] = validate_text(body, "note", 2000, required=False)   # None removes it
     if "copyright" in body:
         fields["copyright"] = validate_flag(body, "copyright") or None   # the credit line; False removes it
+    if "lyrics_layout" in body:
+        # Which note each syllable of the source's lyrics sits on, against the source's score.
+        fields["lyrics_layout"] = validate_lyrics_layout(body["lyrics_layout"])
+    if "tracks" in body:
+        fields["tracks"] = validate_tracks(body["tracks"]) or None
     if not fields:
         raise HttpError(400, "Değişiklik yok")
     sets = {k: v for k, v in fields.items() if v is not None}
@@ -689,6 +783,7 @@ ROUTES = [
     ("DELETE", r"/api/sources/([0-9a-f]{32})", lambda e, m: delete_source(m.group(1))),
     ("PUT", r"/api/sources/([0-9a-f]{32})/score", lambda e, m: save_source_score(m.group(1), parse_body(e))),
     ("DELETE", r"/api/sources/([0-9a-f]{32})/score", lambda e, m: reset_source_score(m.group(1))),
+    ("POST", r"/api/sources/([0-9a-f]{32})/transcribe", lambda e, m: request_transcription(m.group(1), parse_body(e))),
     ("GET", r"/api/styles", lambda e, m: {"styles": [public_style(i) for i in all_items(STYLES)]}),
     ("POST", r"/api/styles", lambda e, m: create_style(parse_body(e))),
     ("DELETE", r"/api/styles/([0-9a-f]{32})", lambda e, m: delete_style(m.group(1))),
@@ -723,6 +818,16 @@ def api(event, context):
 
 # ---------------------------------------------------------------- janitor
 
+def fail_transcription(source_id, message):
+    try:
+        table.update_item(Key={"id": source_id}, ConditionExpression="attribute_exists(id)",
+                          UpdateExpression="SET transcribe_status = :f, transcribe_error = :e",
+                          ExpressionAttributeValues={":f": "failed", ":e": message})
+    except ClientError as error:
+        if error.response["Error"]["Code"] != "ConditionalCheckFailedException":
+            raise
+
+
 def janitor(event, context):
     t = now()
     gpu = describe_gpu()
@@ -745,8 +850,11 @@ def janitor(event, context):
             print("failing stale task", task["id"])
             table.update_item(Key={"id": task["id"]}, UpdateExpression="SET #s = :f, finished_at = :t, updated_at = :t",
                               ExpressionAttributeNames={"#s": "status"}, ExpressionAttributeValues={":f": "failed", ":t": t})
-            table.update_item(Key={"id": task["job_id"]}, UpdateExpression="SET stems_status = :f, stems_error = :e",
-                              ExpressionAttributeValues={":f": "failed", ":e": "Vokal ayırma zaman aşımına uğradı, tekrar deneyin"})
+            if task.get("kind") == "transcribe":
+                fail_transcription(task["source_id"], "Nota çıkarma zaman aşımına uğradı, tekrar deneyin")
+            else:
+                table.update_item(Key={"id": task["job_id"]}, UpdateExpression="SET stems_status = :f, stems_error = :e",
+                                  ExpressionAttributeValues={":f": "failed", ":e": "Vokal ayırma zaman aşımına uğradı, tekrar deneyin"})
 
     if gpu["state"] == "stopped":
         if queue and worker.get("state") == "error":

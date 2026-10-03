@@ -33,6 +33,9 @@ SEPARATOR = "/opt/yue/sep/.venv/bin/audio-separator"
 SEPARATOR_MODELS = "/opt/yue/sep/models"
 SEPARATOR_MODEL = "model_bs_roformer_ep_317_sdr_12.9755.ckpt"   # keep in sync with setup-separator.sh
 SEPARATOR_TIMEOUT = 10 * 60   # a 3 min song takes ~3 min on the L4; anything far beyond that is stuck
+TURBO_PYTHON = "/opt/yue/turbo/.venv/bin/python"
+TRANSCRIBE_TIMEOUT = 20 * 60  # a few minutes on the GPU; the CPU fallback is much slower
+EXCLUSIVE = ("stems", "transcribe")   # these stop YuE2 to have the GPU to themselves and run alone
 
 table = boto3.resource("dynamodb", region_name=REGION).Table(TABLE)
 s3 = boto3.client("s3", region_name=REGION)
@@ -108,6 +111,18 @@ def update_job(job_id, **fields):
                       ExpressionAttributeValues={f":{k}": v for k, v in fields.items()})
 
 
+def update_source(source_id, **fields):
+    """Like update_job, but never brings back a source that was deleted meanwhile."""
+    try:
+        table.update_item(Key={"id": source_id}, ConditionExpression="attribute_exists(id)",
+                          UpdateExpression="SET " + ", ".join(f"#{k} = :{k}" for k in fields),
+                          ExpressionAttributeNames={f"#{k}": k for k in fields},
+                          ExpressionAttributeValues={f":{k}": v for k, v in fields.items()})
+        return True
+    except table.meta.client.exceptions.ConditionalCheckFailedException:
+        return False
+
+
 # ------------------------------------------------------------------ setup
 
 def run_setup():
@@ -175,11 +190,15 @@ def recover_orphans():
                            error="Sunucu iş sırasında durdu (2 deneme)")
                 if job.get("kind") == "stems":
                     update_job(job["job_id"], stems_status="failed", stems_error="Sunucu iş sırasında durdu, tekrar deneyin")
+                if job.get("kind") == "transcribe":
+                    update_source(job["source_id"], transcribe_status="failed", transcribe_error="Sunucu iş sırasında durdu, tekrar deneyin")
             else:
                 log("requeue orphan", job["id"])
                 update_job(job["id"], status="queued", stage="queued", message="Yeniden sırada", queue="q")
                 if job.get("kind") == "stems":
                     update_job(job["job_id"], stems_status="queued", stems_message="Yeniden sırada")
+                if job.get("kind") == "transcribe":
+                    update_source(job["source_id"], transcribe_status="queued", transcribe_message="Yeniden sırada")
 
 
 def claim(job):
@@ -294,6 +313,8 @@ def process(job):
         if download(f"{TURBO}/v1/jobs/{turbo_id}/score", abc, required=False):
             keys["abc_key"] = f"outputs/{job_id}/score.abc"
             s3.upload_file(str(abc), BUCKET, keys["abc_key"], ExtraArgs={"ContentType": "text/plain; charset=utf-8"})
+            if score is None and job.get("source_id"):
+                keep_transcript(job["source_id"], abc)
         result = status.get("result") or {}
         timing = result.get("timing") or {}
         stems = stems_fields(job)
@@ -314,6 +335,77 @@ def process(job):
         stop_requested = bool(job.get("stop_after"))
         subprocess.run(["rm", "-rf", str(work)])
         active.pop(job_id, None)
+        touch()
+
+
+def keep_transcript(source_id, abc):
+    """A cover made straight from the recording transcribed it inside YuE2-Turbo: its score is that
+    transcription, so it becomes the source's score to edit (unless the source already has one)."""
+    try:
+        source = table.get_item(Key={"id": source_id}).get("Item")
+        if not source or source.get("transcript_key"):
+            return
+        key = f"sources/{source_id}.transcript.abc"
+        s3.upload_file(str(abc), BUCKET, key, ExtraArgs={"ContentType": "text/plain; charset=utf-8"})
+        update_source(source_id, transcript_key=key, transcribed_at=now(), transcribe_status="succeeded",
+                      transcribe_message="Hazır")
+    except Exception:
+        traceback.print_exc()   # never fails the cover
+
+
+def process_transcribe(task):
+    """SheetSage2 on one source recording; the score is kept on the source to be edited first."""
+    global stop_requested
+    task_id, source_id = task["id"], task["source_id"]
+    touch()
+    work = WORK / task_id
+    work.mkdir(parents=True, exist_ok=True)
+    try:
+        source = table.get_item(Key={"id": source_id}).get("Item")
+        if not source:
+            raise RuntimeError("Beste bulunamadı (silinmiş olabilir)")
+        update_source(source_id, transcribe_status="running", transcribe_message="Melodi çıkarılıyor (SheetSage2)")
+        update_job(task_id, stage="transcribing", message="Melodi çıkarılıyor")
+        audio = work / Path(source["key"]).name
+        s3.download_file(BUCKET, source["key"], str(audio))
+        stop_turbo()   # YuE2 holds most of the GPU; SheetSage2 would fall back to the much slower CPU
+        out = work / "transcript.abc"
+        env = {**os.environ, "HF_HOME": "/opt/yue/hf"}   # the model cache YuE2-Turbo uses
+        started = time.time()
+        # Heartbeat while it runs: touch() keeps the box from idling off under a long transcription.
+        process = subprocess.Popen([TURBO_PYTHON, str(APP / "worker/transcribe.py"), str(audio), str(out)],
+                                   cwd="/opt/yue/turbo", env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        try:
+            while process.poll() is None:
+                touch()
+                if time.time() - started > TRANSCRIBE_TIMEOUT:
+                    process.kill()
+                    raise RuntimeError(f"Nota çıkarma {TRANSCRIBE_TIMEOUT // 60} dakikada bitmedi, durduruldu; tekrar deneyin")
+                time.sleep(2)
+        finally:
+            output = process.stdout.read() if process.stdout else ""
+        if process.returncode != 0 or not out.exists():
+            log("transcribe failed:", output[-3000:])
+            lines = [l for l in output.strip().splitlines() if l.strip()]
+            raise RuntimeError("Melodi çıkarılamadı: " + (lines[-1][-300:] if lines else f"kod {process.returncode}"))
+        text = out.read_text(encoding="utf-8")
+        if "V: Vocal" not in text or "V: Ins" not in text:
+            raise RuntimeError("SheetSage2 beklenen notayı üretmedi (Vocal/Ins sesleri yok)")
+        key = f"sources/{source_id}.transcript.abc"
+        s3.upload_file(str(out), BUCKET, key, ExtraArgs={"ContentType": "text/plain; charset=utf-8"})
+        if not update_source(source_id, transcript_key=key, transcribed_at=now(), transcribe_status="succeeded",
+                             transcribe_message="Hazır", transcribe_seconds=int(time.time() - started)):
+            s3.delete_object(Bucket=BUCKET, Key=key)   # the source was deleted meanwhile
+        update_job(task_id, status="succeeded", stage="done", message="Hazır", finished_at=now())
+        log("transcribe done", source_id, f"{time.time() - started:.0f}s")
+    except Exception as error:
+        traceback.print_exc()
+        update_source(source_id, transcribe_status="failed", transcribe_error=str(error)[:500])
+        update_job(task_id, status="failed", stage="failed", message="Hata", error=str(error)[:500], finished_at=now())
+    finally:
+        stop_requested = bool(task.get("stop_after"))
+        subprocess.run(["rm", "-rf", str(work)])
+        active.pop(task_id, None)
         touch()
 
 
@@ -431,7 +523,7 @@ def work_loop():
     table.update_item(Key={"id": WORKER_ID}, UpdateExpression="SET boot_seconds = :b",
                       ExpressionAttributeValues={":b": int(time.monotonic() - BOOT_STARTED)})
     touch()
-    kinds = {}          # job id -> "stems" / "cover" for the running work
+    kinds = {}          # job id -> "transcribe" / "cover" / "stems" for the running work
     idle_minutes, idle_checked = IDLE_MINUTES, 0.0
     while True:
         if time.time() - idle_checked > 30:
@@ -447,22 +539,30 @@ def work_loop():
         if len(active) < MAX_PARALLEL:
             queue = table.query(IndexName="queue", KeyConditionExpression=Key("queue").eq("q"),
                                 Limit=25)["Items"]
-            # Covers first. A separation stops YuE2 to get the whole GPU, so it runs alone:
-            # only when no cover is running or waiting, and no cover starts until it is done.
-            queue.sort(key=lambda item: item.get("kind") == "stems")
-            covers_waiting = any(item.get("kind") != "stems" for item in queue)
+            # Transcriptions first (quick, and the user waits on them to edit the score), then covers,
+            # then separations. Transcription and separation stop YuE2 to get the whole GPU, so they
+            # run alone: once the running covers are done, and no cover starts until they finish.
+            order = {"transcribe": 0, "stems": 2}
+            queue.sort(key=lambda item: order.get(item.get("kind"), 1))
+            kind_of = lambda item: item.get("kind") if item.get("kind") in EXCLUSIVE else "cover"
+            covers_waiting = any(kind_of(item) == "cover" for item in queue)
+            transcribe_waiting = any(kind_of(item) == "transcribe" for item in queue)
             for job in queue:
-                if len(active) >= MAX_PARALLEL or any(kinds.get(i) == "stems" for i in list(active)):
+                if len(active) >= MAX_PARALLEL or any(kinds.get(i) in EXCLUSIVE for i in list(active)):
                     break
-                kind = "stems" if job.get("kind") == "stems" else "cover"
-                if kind == "stems" and (active or covers_waiting):
+                kind = kind_of(job)
+                if kind in EXCLUSIVE and active:
+                    continue
+                if kind == "stems" and covers_waiting:
+                    continue
+                if kind == "cover" and transcribe_waiting:
                     continue
                 if kind == "cover" and not turbo_up:
                     start_turbo()
                 claimed = claim(job)
                 if claimed:
                     log("claimed", kind, job["id"])
-                    target = process_stems if kind == "stems" else process
+                    target = {"stems": process_stems, "transcribe": process_transcribe}.get(kind, process)
                     thread = threading.Thread(target=target, args=(claimed,), daemon=True)
                     active[job["id"]] = thread
                     kinds[job["id"]] = kind
@@ -470,6 +570,8 @@ def work_loop():
         busy = bool(active)
         if any(kinds.get(i) == "stems" for i in list(active)):
             message = "Vokal ayrılıyor"
+        elif any(kinds.get(i) == "transcribe" for i in list(active)):
+            message = "Nota çıkarılıyor"
         else:
             message = f"{len(active)} düzenleme yapılıyor" if busy else "Hazır, iş bekliyor"
         with state_lock:

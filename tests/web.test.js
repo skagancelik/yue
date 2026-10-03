@@ -1,0 +1,162 @@
+// Tests for the browser's score logic (no browser needed): node tests/web.test.js
+"use strict";
+const assert = require("assert");
+global.ScoreModel = require("../web/score-model.js");
+global.LyricsLayout = require("../web/lyrics-layout.js");
+global.Timeline = require("../web/timeline.js");
+global.Align = require("../web/align.js");
+global.Arrange = require("../web/arrange.js");
+
+// A SheetSage2-like score: a hummed two-bar intro in Vocal (Ins empty), a four-bar verse, a
+// four-bar chorus and a two-bar outro played by Ins. 4/4, L:1/32 (32 units a bar), 96 BPM.
+const ABC = `X:1
+T:
+M:4/4
+L:1/32
+Q:1/4=96
+V: Vocal clef=treble name="Vocal Melody" snm="Vocal"
+V: Ins clef=treble name="Ins Melody" snm="Inst."
+K:C
+% intro
+V: Vocal
+c8d8e8z8|g16e16|
+V: Ins
+Z2|
+% verse
+V: Vocal
+c8c8d8e8|f8e8d8z8|e8e8f8g8|a16g8z8|
+V: Ins
+Z4|
+% chorus
+V: Vocal
+c'8b8a8g8|a8g8f8z8|e8f8g8a8|g24z8|
+V: Ins
+Z4|
+% outro
+V: Vocal
+Z2|
+V: Ins
+c16G16|C32|
+`;
+
+const LYRICS = `[Verse]
+Gel gör be-ni aş-kın
+Ne yap-tı bil-mez-sin
+
+[Chorus]
+Sev-dim se-ni de-li gi-bi
+Gel ar-tık`.replace(/-/g, "");
+
+const tests = [];
+const test = (name, fn) => tests.push([name, fn]);
+
+test("phrases cut at rests and section starts", () => {
+  const tl = Timeline.build(ABC);
+  const ps = Align.phrases(tl);
+  assert.deepStrictEqual(ps.map((p) => p.notes.length), [3, 2, 7, 6, 7, 5]);
+  assert.deepStrictEqual(ps.map((p) => p.name), ["intro", null, "verse", null, "chorus", null]);
+});
+
+test("autoAlign puts each lyric section on its score section and skips the hummed intro", () => {
+  const tl = Timeline.build(ABC);
+  const map = Align.autoAlign(tl, LYRICS);
+  const sylls = LyricsLayout.allSyllables(LYRICS);
+  assert.strictEqual(map.length, sylls.length);
+  assert.ok(map.every((n) => n != null), "every syllable on a note");
+  // The first verse syllable on the first verse note (note 5: the intro has 5 notes).
+  assert.strictEqual(map[0], 5);
+  const chorusStart = sylls.findIndex((s) => s.section === 1);
+  assert.strictEqual(tl.vocal[map[chorusStart]].bar, 6, "chorus starts on bar 7");
+  assert.strictEqual(LyricsLayout.checkMap(map, tl.vocal.length), null);
+});
+
+test("flow lays a word from the drop note and pushes what is in the way", () => {
+  const map = [0, 1, 2, 3, 4, 5];
+  const out = Align.flow(map, [1, 2], 3, 10);
+  assert.deepStrictEqual(out.map, [0, 3, 4, 5, 6, 7]);
+  assert.strictEqual(out.pushed, 3);
+  const left = Align.flow(map, [4], 1, 10);
+  assert.deepStrictEqual(left.map, [null, null, null, 0, 1, 5], "earlier ones pushed left, off the start");
+  assert.strictEqual(left.lost, 3);
+  const keep = Align.flow([0, 2, 2, 5], [0, 1, 2], 1, 10, true);
+  assert.deepStrictEqual(keep.map, [1, 3, 3, 5], "keepShape keeps distances and the shared note");
+  assert.strictEqual(typeof Align.flow(map, [5], 12, 10), "string");
+});
+
+test("wordOf finds the syllables of one word", () => {
+  const sylls = LyricsLayout.allSyllables("[Verse]\nsevdim seni");
+  assert.deepStrictEqual(sylls.map((s) => s.text), ["sev", "dim", "se", "ni"]);
+  assert.deepStrictEqual(Align.wordOf(sylls, 1), [0, 1]);
+  assert.deepStrictEqual(Align.wordOf(sylls, 2), [2, 3]);
+});
+
+test("compile: unsung intro goes to Ins, sections follow the lyrics, style gets tracks and tempo", () => {
+  const tl = Timeline.build(ABC);
+  const map = Align.autoAlign(tl, LYRICS);
+  const tracks = [
+    { instrument: "strings", feel: ["energetic"], bars: [[6, 9]], text: "", lead: false },
+    { instrument: "piano", feel: ["soft"], bars: null, text: "", lead: false },
+  ];
+  const out = Arrange.compile({ abc: ABC, lyrics: LYRICS, map, tracks, style: "Turkish pop, male vocal" });
+  const model = ScoreModel.parse(out.abc);
+  const runs = ScoreModel.sections(model);
+  assert.deepStrictEqual(runs.map((r) => [r.label, r.sung]), [["intro", false], ["verse", true], ["chorus", true], ["outro", false]]);
+  assert.strictEqual(model.bars[0].vocal, "Z");
+  assert.strictEqual(model.bars[0].ins, "c8d8e8z8", "the hummed intro is played");
+  assert.strictEqual(out.style, "Turkish pop, male vocal, energetic strings in the chorus, soft piano, 96 BPM");
+  assert.ok(out.lyrics.startsWith("[Verse]\n"));
+  // The syllables stay on the same notes (by time) in the compiled score.
+  const tl2 = Timeline.build(out.abc);
+  const again = Timeline.mapFromOnsets(tl2, out.at);
+  assert.strictEqual(again.filter((n) => n != null).length, map.length);
+  assert.ok(out.report.some((r) => /enstrümana verildi/.test(r.text)));
+});
+
+test("compile renames score sections after where the lyrics were put", () => {
+  const tl = Timeline.build(ABC);
+  const lyrics = "[Nakarat]\nsevdim seni deli gibi gel artık\n\n[Kıta]\ngel gör beni aşkın";
+  const sylls = LyricsLayout.allSyllables(lyrics);
+  // The chorus lyrics on the verse bars and the verse lyrics on the chorus bars.
+  const map = sylls.map((s, g) => (s.section === 0 ? 5 + g : 12 + (g - sylls.findIndex((x) => x.section === 1))));
+  const out = Arrange.compile({ abc: ABC, lyrics, map, tracks: [], style: "pop" });
+  const runs = ScoreModel.sections(ScoreModel.parse(out.abc));
+  assert.deepStrictEqual(runs.filter((r) => r.sung).map((r) => r.label), ["chorus", "verse"]);
+  assert.ok(out.lyrics.startsWith("[Chorus]\n") && out.lyrics.includes("\n[Verse]\n"));
+});
+
+test("scopeText names sections and bars", () => {
+  const model = ScoreModel.parse(ABC);
+  const runs = ScoreModel.sections(model);
+  assert.strictEqual(Arrange.scopeText([[0, 1], [10, 11]], runs, 12), "in the intro and the outro");
+  assert.strictEqual(Arrange.scopeText([[3, 3]], runs, 12), "in bar 4");
+  assert.strictEqual(Arrange.scopeText([[0, 11]], runs, 12), "");
+  assert.strictEqual(Arrange.trackPhrase({ instrument: "saxophone", feel: [], lead: true, bars: [[10, 11]], text: "breathy" }, runs, 12),
+    "saxophone playing the main melody breathy in the outro");
+});
+
+test("compile hands the hum after the last syllable to the instrument note by note, ties included", () => {
+  // One verse line of three syllables; the phrase goes on humming for two more bars, tied over.
+  const abc = ABC.replace("% chorus\nV: Vocal\nc'8b8a8g8|a8g8f8z8|e8f8g8a8|g24z8|", "% chorus\nV: Vocal\nc'8b8a8g8|a8g8f8g8-|g8f8e8d8|c24z8|");
+  const lyrics = "[Verse]\nGel gör beni aşkın\nNe yaptı bilmezsin\n\n[Chorus]\nSev dim se";
+  const tl = Timeline.build(abc);
+  const map = Align.autoAlign(tl, lyrics);
+  const out = Arrange.compile({ abc, lyrics, map, tracks: [], style: "pop" });
+  const model = ScoreModel.parse(out.abc);
+  // "se" keeps a short melisma (bar 7 and the start of bar 8); the hum after it, tied over the
+  // barline, goes to Ins with all its parts, and the outro starts where the singing ends.
+  assert.strictEqual(model.bars[6].vocal, "c'8b8a8g8");
+  assert.strictEqual(model.bars[7].vocal, "a8g8z16");
+  assert.strictEqual(model.bars[7].ins, "z16f8g8-");
+  assert.strictEqual(model.bars[8].vocal, "Z");
+  assert.strictEqual(model.bars[8].ins, "g8f8e8d8");
+  assert.deepStrictEqual(model.bars[8].labels, ["outro"]);
+  const sung = ScoreModel.sections(model).filter((r) => r.sung).map((r) => r.label);
+  assert.deepStrictEqual(sung, ["verse", "chorus"]);
+  assert.ok(out.report.some((r) => /söylenen notaların yanındaki/.test(r.text)));
+});
+
+let failed = 0;
+for (const [name, fn] of tests) {
+  try { fn(); console.log("ok  ", name); } catch (error) { failed++; console.log("FAIL", name, "\n   ", error.message); }
+}
+process.exit(failed ? 1 : 0);
