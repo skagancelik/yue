@@ -404,7 +404,8 @@ function scoreSummary(item) {
   if (transcribing(item)) return { text: transcribeText(item), busy: true };
   if (item.transcribe_status === "failed" && !item.has_score) return { text: `⚠ Nota çıkarılamadı: ${item.transcribe_error || "bilinmeyen hata"}`, error: true };
   if (!item.has_score) return { text: "Nota henüz çıkarılmadı. Düzenleme yapınca kendiliğinden çıkarılır; önce düzeltmek istersen sadece notayı çıkar." };
-  const parts = [item.score_edited ? "🎼 düzeltilmiş nota" : "🎼 çıkarılmış nota"];
+  const versions = (item.transcripts || []).length;
+  const parts = [(item.score_edited ? "🎼 düzeltilmiş nota" : "🎼 çıkarılmış nota") + (versions > 1 ? ` (${versions} sürüm)` : "")];
   const total = item.lyrics ? LyricsLayout.allSyllables(item.lyrics).length : 0;
   const at = item.lyrics_layout && item.lyrics_layout.at;
   if (total) parts.push(at && at.length === total ? `${at.filter((n) => n != null).length}/${total} hece yerleşik` : "heceler henüz yerleştirilmedi");
@@ -427,6 +428,10 @@ function fillSourceScore(node, item) {
     ? "Notayı, sözün hecelerini ve enstrüman izlerini zaman çizgisinde düzenle"
     : "Kayıttaki melodiyi SheetSage2 ile notaya çevir ve bu bestede sakla (düzenleme yapmaz)";
   button.onclick = () => (item.has_score ? openSourceDaw(item) : transcribeSource(item, button));
+  const again = node.querySelector(".retranscribe");
+  again.classList.toggle("hidden", !!summary.busy || !item.has_score);
+  again.disabled = false;
+  again.onclick = () => transcribeSource(item, again);
 }
 
 async function transcribeSource(item, button) {
@@ -546,7 +551,8 @@ function renderPrep() {
   }
   $("prep-state").innerHTML = lines.map((l) => `<div>${l.startsWith("<span") ? l : escapeHtml(l)}</div>`).join("");
   $("prep-progress").classList.toggle("hidden", !busy);
-  $("prep-transcribe").classList.toggle("hidden", busy || item.has_score);
+  $("prep-transcribe").classList.toggle("hidden", busy);
+  $("prep-transcribe").textContent = item.has_score ? "🎼 Yeniden çıkar (yeni sürüm)" : "🎼 Sadece notayı çıkar";
   $("prep-daw").classList.toggle("hidden", !item.has_score);
   $("prep-preview").classList.toggle("hidden", !item.has_score);
   $("create").textContent = item.has_score ? "🎤 Düzenleme yap" : "🎤 Notayı çıkar + düzenleme yap";

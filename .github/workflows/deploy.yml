@@ -34,7 +34,7 @@ jobs:
 
       - name: Lint
         run: |
-          python3 -m py_compile api/handler.py worker/agent.py
+          python3 -m py_compile api/handler.py worker/agent.py worker/transcribe.py
           bash -n worker/setup.sh worker/boot.sh
           for f in web/*.js; do node --check "$f"; done
 

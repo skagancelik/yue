@@ -82,7 +82,11 @@ const Arrange = (() => {
     return `in ${list}`;
   }
 
+  // bars null = the whole song; [] = nowhere yet (the track is left out).
+  const placedNowhere = (track) => Array.isArray(track.bars) && !track.bars.length;
+
   function trackPhrase(track, runs, barCount) {
+    if (placedNowhere(track)) return "";
     const words = [...(track.feel || []), track.instrument].filter(Boolean).join(" ");
     const scope = scopeText(track.bars, runs, barCount);
     return [words + (track.lead ? " playing the main melody" : ""), track.text, scope].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
@@ -90,7 +94,7 @@ const Arrange = (() => {
 
   function composeStyle(base, tracks, model, { bpm = true } = {}) {
     const runs = ScoreModel.sections(model);
-    const phrases = (tracks || []).filter((t) => t.instrument).map((t) => trackPhrase(t, runs, model.bars.length));
+    const phrases = (tracks || []).filter((t) => t.instrument && !placedNowhere(t)).map((t) => trackPhrase(t, runs, model.bars.length));
     const parts = [(base || "").trim().replace(/[\s,;.]+$/, ""), ...phrases].filter(Boolean);
     const tempo = (model.header.find((l) => l.startsWith("Q:")) || "").match(/(\d+(?:\.\d+)?)\s*$/);
     if (bpm && tempo && !/\bbpm\b/i.test(base || "")) parts.push(`${Math.round(Number(tempo[1]))} BPM`);
