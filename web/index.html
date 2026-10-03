@@ -65,6 +65,16 @@
           </div>
         </div>
 
+        <div id="prep" class="prep hidden">
+          <div id="prep-state" class="prep-state small"></div>
+          <div class="progress indeterminate hidden" id="prep-progress"><div></div></div>
+          <div class="prep-actions">
+            <button type="button" id="prep-transcribe" class="btn ghost small hidden" title="Yalnızca melodiyi notaya çevir ve bestede sakla; düzenleme yapma">🎼 Sadece notayı çıkar</button>
+            <button type="button" id="prep-daw" class="btn ghost small hidden" title="Notayı, heceleri ve izleri zaman çizgisinde hazırla">🎛 Zaman çizgisinde hazırla</button>
+            <button type="button" id="prep-preview" class="btn ghost small hidden">👁 YuE2'ye gidecekler</button>
+          </div>
+        </div>
+
         <label class="check credit-check"><input id="credit-create" type="checkbox" checked> Söz &amp; Beste: Serkan Kağan Çelik ©️ Tüm Hakları Saklıdır</label>
 
         <label class="field-label" for="title">2 · Başlık</label>
@@ -171,8 +181,11 @@
       <div class="credit source-credit hidden"></div>
       <audio controls preload="none"></audio>
       <div class="note source-note hidden"></div>
+      <div class="source-score small hidden"></div>
+      <div class="progress indeterminate source-progress hidden"><div></div></div>
       <div class="source-actions">
         <button type="button" class="btn ghost small use">Bununla düzenle</button>
+        <button type="button" class="btn ghost small score-act hidden"></button>
         <button type="button" class="btn ghost small edit-text">Stil, söz, not</button>
         <button type="button" class="btn ghost small danger remove">Sil</button>
       </div>
@@ -283,8 +296,13 @@
       <button type="button" id="daw-zoom-in" class="btn ghost small" title="Yakınlaş">+</button>
       <button type="button" id="daw-after" class="btn ghost small" title="Seçili ilk heceden sonraki bütün heceleri de seç">→ Sonrakileri de seç</button>
       <button type="button" id="daw-undo" class="btn ghost small" title="Geri al (⌘/Ctrl+Z)">↶ Geri al</button>
-      <button type="button" id="daw-auto" class="btn ghost small" title="Heceler yeniden kendiliğinden yerleşsin">Otomatik yerleştir</button>
+      <button type="button" id="daw-auto" class="btn ghost small" title="Heceler melodinin cümlelerine göre yeniden yerleşsin">✨ Otomatik yerleştir</button>
+      <span id="daw-selmode" class="seg" role="group" aria-label="Tıklayınca seç">
+        <button type="button" data-mode="word" title="Tıklayınca bütün kelime seçilir (W)">Kelime</button>
+        <button type="button" data-mode="syllable" title="Tıklayınca tek hece seçilir (W)">Hece</button>
+      </span>
       <span class="daw-spacer"></span>
+      <button type="button" id="daw-preview" class="btn ghost small" title="Bu hazırlıktan YuE2'ye gidecek stil, söz ve notayı gör">👁 YuE2'ye gidecekler</button>
       <span id="daw-origin" class="muted small"></span>
       <button type="button" id="daw-reset" class="btn ghost small hidden" title="Bestenin düzeltilmiş notasını sil; yeni düzenlemeler melodiyi yine kayıttan çıkarır">Özgün notaya dön</button>
       <button type="button" id="daw-save" class="btn primary small" disabled>💾 Kaydet</button>
@@ -325,10 +343,66 @@
         <button type="button" id="daw-swap" class="btn ghost small" title="Seçili ölçülerde söylenen notalar enstrümana, enstrümanınkiler vokale geçer">🎤⇄🎹 Vokal ⇄ Enstrüman</button>
       </div>
     </div>
-    <div id="daw-scroll" class="daw-scroll"></div>
-    <div id="daw-tray" class="daw-tray hidden"></div>
+    <div class="daw-body">
+      <div class="daw-main">
+        <div id="daw-scroll" class="daw-scroll"></div>
+        <div id="daw-tray" class="daw-tray hidden"></div>
+      </div>
+      <aside id="daw-side" class="daw-side">
+        <div class="daw-side-head">
+          <strong>Söz</strong>
+          <button type="button" id="daw-lyrics-edit" class="btn ghost small" title="Sözün metnini düzenle">✎ Sözü yaz</button>
+          <button type="button" id="daw-side-toggle" class="icon-btn" title="Söz panelini gizle / göster">⇥</button>
+        </div>
+        <p class="muted small daw-side-hint">Kelimeye tıkla, satırı ⋮⋮ ile tut; zaman çizgisine sürükleyip başlayacağı notaya bırak.</p>
+        <div id="daw-words" class="daw-words"></div>
+        <div class="daw-lyrics-editor">
+          <textarea id="daw-lyrics-text" rows="16" maxlength="16000" placeholder="[Verse]&#10;İlk dize&#10;&#10;[Chorus]&#10;Nakarat…"></textarea>
+          <div class="row-actions">
+            <button type="button" id="daw-lyrics-apply" class="btn primary small">Uygula</button>
+            <button type="button" id="daw-lyrics-cancel" class="btn ghost small">Vazgeç</button>
+          </div>
+          <p class="muted small">Hece sayısı aynı kalırsa heceler yerinde kalır; değişirse melodiye yeniden yerleşir.</p>
+        </div>
+      </aside>
+    </div>
+    <div id="daw-track-pop" class="daw-track-pop hidden" role="dialog" aria-label="İz">
+      <div class="dt-row">
+        <select id="dt-instrument" aria-label="Enstrüman"></select>
+        <input id="dt-custom" class="hidden" type="text" maxlength="80" placeholder="İngilizce, örn. kanun, ney, 808 bass">
+        <button type="button" id="dt-close" class="icon-btn" aria-label="Kapat">✕</button>
+      </div>
+      <div class="muted small">Nasıl çalsın?</div>
+      <div id="dt-feel" class="dt-feel"></div>
+      <input id="dt-text" type="text" maxlength="300" placeholder="Serbest (İngilizce en iyisi): örn. long sustained notes, pizzicato">
+      <label class="check small"><input id="dt-lead" type="checkbox"> Ana melodiyi bu enstrüman çalsın</label>
+      <div class="dt-row">
+        <button type="button" id="dt-all" class="btn ghost small">Baştan sona</button>
+        <button type="button" id="dt-none" class="btn ghost small">Hiçbir yerde</button>
+        <span class="daw-spacer"></span>
+        <button type="button" id="dt-delete" class="btn ghost small danger">İzi sil</button>
+      </div>
+      <div class="dt-phrase small"><span class="muted">YuE2'ye:</span> <span id="dt-phrase"></span></div>
+    </div>
     <div class="daw-foot"><span id="daw-info" class="small"></span> <span id="daw-msg" class="small daw-msg"></span></div>
     <div id="daw-hidden" class="hidden" aria-hidden="true"></div>
+  </dialog>
+
+  <dialog id="yue-preview" class="modal yue-preview">
+    <div class="modal-head">
+      <h3 id="yp-title">YuE2'ye gidecekler</h3>
+      <button type="button" id="yp-close" class="icon-btn" aria-label="Kapat">✕</button>
+    </div>
+    <p class="muted small">YuE2 bir stil metni, bölüm etiketli sözler ve iki sesli (Vocal/Ins) bir nota okur. Hece yerleşimini ve izleri bu üçüne çeviren hazırlık:</p>
+    <div id="yp-report" class="yp-report"></div>
+    <h4>Bölümler</h4>
+    <div id="yp-structure" class="yp-structure"></div>
+    <h4>Stil</h4>
+    <pre id="yp-style" class="yp-pre"></pre>
+    <h4>Söz</h4>
+    <pre id="yp-lyrics" class="yp-pre"></pre>
+    <details><summary>Nota (ABC)</summary><pre id="yp-abc" class="yp-pre"></pre></details>
+    <p id="yp-note" class="muted small"></p>
   </dialog>
 
   <div id="playerbar" class="playerbar hidden" role="region" aria-label="Oynatıcı">
@@ -356,6 +430,8 @@
   <script src="score-model.js"></script>
   <script src="lyrics-layout.js"></script>
   <script src="timeline.js"></script>
+  <script src="align.js"></script>
+  <script src="arrange.js"></script>
   <script src="app.js"></script>
   <script src="daw.js"></script>
 </body>

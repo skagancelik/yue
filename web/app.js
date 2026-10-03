@@ -344,7 +344,8 @@ function renderSources() {
     const used = jobs.filter((j) => j.source_id === item.id).length;
     const saved = item.style || item.lyrics;
     node.querySelector(".source-meta").textContent = [used ? `${used} düzenleme` : "", saved ? "✓ stil ve söz kayıtlı" : "",
-      item.score_edited ? "🎼 düzeltilmiş nota" : "", fmtAgo(item.created_at)].filter(Boolean).join(" · ");
+      fmtAgo(item.created_at)].filter(Boolean).join(" · ");
+    fillSourceScore(node, item);
     node.querySelector(".use").textContent = source && source.id === item.id ? "Seçili" : "Bununla düzenle";
     node.querySelector(".use").onclick = () => { selectSource(item); window.scrollTo({ top: 0, behavior: "smooth" }); };
     // Do not overwrite what is being typed while the library refreshes.
@@ -391,6 +392,52 @@ function renderSources() {
     };
     return node;
   }));
+}
+
+// The source's score: extract it on its own, follow the extraction, open it in the timeline.
+const transcribing = (item) => ["queued", "running"].includes(item.transcribe_status);
+const transcribeText = (item) => (item.transcribe_status === "running"
+  ? `🎼 ${item.transcribe_message || "Melodi çıkarılıyor"}`
+  : `🎼 Nota çıkarma sırada${gpu && gpu.gpu.state !== "running" ? " · GPU açılıyor (~3 dk)" : ""}`);
+
+function scoreSummary(item) {
+  if (transcribing(item)) return { text: transcribeText(item), busy: true };
+  if (item.transcribe_status === "failed" && !item.has_score) return { text: `⚠ Nota çıkarılamadı: ${item.transcribe_error || "bilinmeyen hata"}`, error: true };
+  if (!item.has_score) return { text: "Nota henüz çıkarılmadı. Düzenleme yapınca kendiliğinden çıkarılır; önce düzeltmek istersen sadece notayı çıkar." };
+  const parts = [item.score_edited ? "🎼 düzeltilmiş nota" : "🎼 çıkarılmış nota"];
+  const total = item.lyrics ? LyricsLayout.allSyllables(item.lyrics).length : 0;
+  const at = item.lyrics_layout && item.lyrics_layout.at;
+  if (total) parts.push(at && at.length === total ? `${at.filter((n) => n != null).length}/${total} hece yerleşik` : "heceler henüz yerleştirilmedi");
+  if (item.tracks && item.tracks.length) parts.push(`${item.tracks.length} iz`);
+  return { text: parts.join(" · ") };
+}
+
+function fillSourceScore(node, item) {
+  const line = node.querySelector(".source-score");
+  const summary = scoreSummary(item);
+  line.textContent = summary.text;
+  line.classList.remove("hidden");
+  line.classList.toggle("error", !!summary.error);
+  node.querySelector(".source-progress").classList.toggle("hidden", !summary.busy);
+  const button = node.querySelector(".score-act");
+  button.classList.toggle("hidden", !!summary.busy);
+  button.disabled = false;
+  button.textContent = item.has_score ? "🎛 Notayı düzenle" : item.transcribe_status === "failed" ? "🎼 Tekrar dene" : "🎼 Notayı çıkar";
+  button.title = item.has_score
+    ? "Notayı, sözün hecelerini ve enstrüman izlerini zaman çizgisinde düzenle"
+    : "Kayıttaki melodiyi SheetSage2 ile notaya çevir ve bu bestede sakla (düzenleme yapmaz)";
+  button.onclick = () => (item.has_score ? openSourceDaw(item) : transcribeSource(item, button));
+}
+
+async function transcribeSource(item, button) {
+  if (button) button.disabled = true;
+  try {
+    const result = await api(`/sources/${item.id}/transcribe`, { method: "POST", body: JSON.stringify({ stop_gpu: $("stop-gpu").checked }) });
+    sources = sources.map((s) => (s.id === item.id ? result.source : s));
+    renderSources();
+    updateCreate();
+    refresh();
+  } catch (error) { report(error); if (button) button.disabled = false; }
 }
 
 // ---------------------------------------------------------------- style sets
@@ -463,15 +510,118 @@ function updateCreate() {
   const ready = source && (source.id || source.key) && currentFolder() && $("style").value.trim() && $("lyrics").value.trim();
   $("create").disabled = !ready;
   const variants = Number($("variants").value);
+  renderPrep();
   if (!gpu) { $("create-note").textContent = ""; return; }
   const state = gpu.gpu.state;
   const warm = state === "running" && ["ready", "busy"].includes(gpu.worker.state);
   $("create-note").textContent = warm
     ? `GPU açık · düzenleme başına ~1–3 dk`
     : `GPU kapalı · açılış ~3 dk + düzenleme ~1–3 dk${variants === 2 ? " (2 varyasyon birlikte)" : ""}`;
-  const item = source && source.id && sources.find((s) => s.id === source.id);
-  if (item && item.score_edited) $("create-note").textContent += " · 🎼 bestenin düzeltilmiş notası kullanılacak";
+  const item = selectedItem();
+  if (item && item.has_score) $("create-note").textContent += " · nota çıkarma adımı atlanır";
 }
+
+const selectedItem = () => source && source.id && sources.find((s) => s.id === source.id);
+
+// The steps around the selected source: extract its score on its own, prepare it in the timeline,
+// see what YuE2 will get; or do it all at once with the main button.
+function renderPrep() {
+  const item = selectedItem();
+  $("prep").classList.toggle("hidden", !item);
+  if (!item) { $("create").textContent = "🎤 Düzenleme yap"; return; }
+  const busy = transcribing(item);
+  const lines = [];
+  if (busy) lines.push(`${transcribeText(item)}. Bitince notayı, heceleri ve izleri zaman çizgisinde düzenleyebilirsin.`);
+  else if (!item.has_score) {
+    lines.push(item.transcribe_status === "failed" ? `⚠ Nota çıkarılamadı: ${item.transcribe_error || "bilinmeyen hata"}` : "Bu bestenin notası henüz çıkarılmadı.");
+    lines.push("Tek seferde: düğmeye bas, nota çıkarılır ve düzenleme yapılır (nota besteye de kaydedilir). Ya da önce sadece notayı çıkar, sözleri ve izleri hazırla.");
+  } else {
+    const summary = scoreSummary(item).text;
+    lines.push(summary);
+    const lyrics = $("lyrics").value.trim();
+    const saved = item.lyrics_layout && item.lyrics_layout.at && lyrics === (item.lyrics || "").trim()
+      && item.lyrics_layout.at.length === LyricsLayout.allSyllables(lyrics).length;
+    if (lyrics && !saved) lines.push('<span class="warn">⚠ Bu sözün hece yerleşimi kayıtlı değil; heceler melodiye otomatik yerleştirilecek. 🎛 ile kontrol etmen önerilir.</span>');
+    else if (lyrics) lines.push("Hece yerleşimi, hecesiz ölçüler (enstrümana verilir), bölüm adları ve izler YuE2'nin okuyacağı notaya, söze ve stile çevrilecek.");
+  }
+  $("prep-state").innerHTML = lines.map((l) => `<div>${l.startsWith("<span") ? l : escapeHtml(l)}</div>`).join("");
+  $("prep-progress").classList.toggle("hidden", !busy);
+  $("prep-transcribe").classList.toggle("hidden", busy || item.has_score);
+  $("prep-daw").classList.toggle("hidden", !item.has_score);
+  $("prep-preview").classList.toggle("hidden", !item.has_score);
+  $("create").textContent = item.has_score ? "🎤 Düzenleme yap" : "🎤 Notayı çıkar + düzenleme yap";
+  if (busy) $("create").disabled = true;
+}
+
+function escapeHtml(text) {
+  return text.replace(/[<&>"]/g, (ch) => ({ "<": "&lt;", "&": "&amp;", ">": "&gt;", '"': "&quot;" })[ch]);
+}
+
+$("prep-transcribe").addEventListener("click", () => { const item = selectedItem(); if (item) transcribeSource(item, $("prep-transcribe")); });
+$("prep-daw").addEventListener("click", () => {
+  const item = selectedItem();
+  if (!item) return;
+  // What is typed in the form is what gets laid out; unsaved lyrics are offered to the timeline.
+  const lyrics = $("lyrics").value.trim();
+  openSourceDaw(item, lyrics && lyrics !== (item.lyrics || "").trim() ? lyrics : item.lyrics || "");
+});
+$("prep-preview").addEventListener("click", async () => {
+  const item = selectedItem();
+  if (!item) return;
+  try {
+    const compiled = await prepareSource(item, $("lyrics").value.trim(), $("style").value.trim());
+    showYuePreview(compiled, item.name, false);
+  } catch (error) { $("create-error").textContent = `Önizleme hazırlanamadı: ${error.message}`; }
+});
+
+// The source's score with the lyrics laid on it and the tracks, as YuE2 will get it (arrange.js).
+const scoreTexts = new Map();   // url without its signature → abc
+async function sourceAbc(item) {
+  const url = item.score_url || item.transcript_url;
+  const key = url.split("?")[0] + (item.score_updated_at || "") + (item.transcribed_at || "");
+  if (!scoreTexts.has(key)) {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`bestenin notası alınamadı (${response.status})`);
+    scoreTexts.set(key, await response.text());
+  }
+  return scoreTexts.get(key);
+}
+
+async function prepareSource(item, lyrics, style) {
+  const abc = await sourceAbc(item);
+  let map = null;
+  const at = item.lyrics_layout && item.lyrics_layout.at;
+  if (at && lyrics === (item.lyrics || "").trim()) {
+    try { map = Timeline.mapFromOnsets(Timeline.build(abc), at); } catch (error) { map = null; }
+  }
+  return Arrange.compile({ abc, lyrics, map, tracks: item.tracks || [], style });
+}
+
+function showYuePreview(compiled, title, unsaved) {
+  $("yp-title").textContent = `YuE2'ye gidecekler · ${title}`;
+  $("yp-report").replaceChildren(...(compiled.report.length ? compiled.report : [{ kind: "ok", text: "Notada değiştirilecek bir şey yok." }]).map((r) => {
+    const line = document.createElement("div");
+    line.className = r.kind;
+    line.textContent = (r.kind === "warn" ? "⚠ " : "✓ ") + r.text;
+    return line;
+  }));
+  $("yp-structure").replaceChildren(...compiled.structure.map((run) => {
+    const chip = document.createElement("span");
+    chip.className = run.sung ? "sung" : "";
+    chip.textContent = `${run.label || "adsız"} ${run.sung ? "🎤" : "🎹"} ${run.from + 1}–${run.to + 1}`;
+    chip.title = `ölçü ${run.from + 1}–${run.to + 1}: ${run.sung ? "söylenen" : "yalnız enstrüman"}`;
+    return chip;
+  }));
+  $("yp-style").textContent = compiled.style || "(stil boş)";
+  $("yp-lyrics").textContent = compiled.lyrics || "(söz yok)";
+  $("yp-abc").textContent = compiled.abc;
+  $("yp-note").textContent = (compiled.style.length > 2000 ? "⚠ Stil 2000 karakterden uzun; kısaltman gerekir. " : "")
+    + (unsaved ? "Kaydedilmemiş değişiklikler de dahil. " : "")
+    + "Düzenleme yap'a basınca bunlar gönderilir; bestenin kendi notası değişmez.";
+  $("yue-preview").showModal();
+}
+$("yp-close").addEventListener("click", () => $("yue-preview").close());
+$("yue-preview").addEventListener("click", (event) => { if (event.target === $("yue-preview")) $("yue-preview").close(); });
 $("variants").addEventListener("change", updateCreate);
 
 $("create").addEventListener("click", async () => {
@@ -487,6 +637,15 @@ $("create").addEventListener("click", async () => {
     };
     if (source.id) body.source_id = source.id;
     else { body.upload_key = source.key; body.source_name = source.name; }
+    // A source with a score: send it prepared (lyrics laid on it, unsung bars to the instrument,
+    // sections named after the lyrics, tracks in the style). Without one Turbo extracts it.
+    const item = selectedItem();
+    if (item && item.has_score) {
+      const compiled = await prepareSource(item, body.lyrics, body.style);
+      if (compiled.style.length > 2000) throw new Error("İzlerle birlikte stil 2000 karakteri aşıyor; stili ya da iz açıklamalarını kısalt");
+      Object.assign(body, { abc: compiled.abc, lyrics: compiled.lyrics, style: compiled.style, style_base: body.style,
+        lyrics_layout: { at: compiled.at } });
+    }
     const result = await api("/jobs", { method: "POST", body: JSON.stringify(body) });
     jobs = [...result.jobs, ...jobs];
     view = { ...view, tab: "jobs" };
@@ -773,7 +932,8 @@ function fillJob(node, job) {
   const error = node.querySelector(".job-error");
   error.classList.toggle("hidden", !job.error);
   error.textContent = job.error || "";
-  node.querySelector(".meta").textContent = fmtAgo(job.created_at) + (job.edited_score ? " · 🎼 düzeltilmiş nota" : "");
+  const from = { prepared: " · 🎛 hazırlanmış nota", edited: " · 🎼 düzeltilmiş nota", transcript: " · 🎼 çıkarılmış nota" }[job.score_from] || "";
+  node.querySelector(".meta").textContent = fmtAgo(job.created_at) + from;
   node.querySelector(".rename").onclick = async () => {
     const title = prompt("Şarkı adı", job.title);
     if (!title || !title.trim() || title.trim() === job.title) return;
@@ -914,9 +1074,10 @@ function drawScore() {
   wrap.scrollTop = top;
   let status = score.abc !== score.jobAbc
     ? "Bestenin yeni düzeltilmiş notası (bu besteden yapılacak yeni düzenlemelerde YuE2'ye verilecek). Akor içermez."
-    : score.job.edited_score
-      ? "Bestenin düzeltilmiş notası (YuE2'ye verilen nota). Akor içermez."
-      : "Besteden çıkarılan melodi (YuE2'ye verilen nota). Akor içermez.";
+    : {
+      prepared: "Zaman çizgisinde hazırlanan nota (YuE2'ye verilen nota). Akor içermez.",
+      edited: "Bestenin düzeltilmiş notası (YuE2'ye verilen nota). Akor içermez.",
+    }[score.job.score_from] || "Besteden çıkarılan melodi (YuE2'ye verilen nota). Akor içermez.";
   if (!total) status += " Bu düzenlemede söz yok.";
   else if (withLyrics) status += ` Sözler tahmini yerleştirildi: ${placed}/${total} hece bir notaya denk geldi.`;
   const short = score.words.sections.filter((section) => section.count > section.placed);
@@ -1187,7 +1348,7 @@ function reuse(job) {
   }
   // The job's own style and lyrics win over what the source remembers.
   $("title").value = job.title;
-  $("style").value = job.style;
+  $("style").value = job.style_base || job.style;
   $("lyrics").value = job.lyrics;
   updateCreate();
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1244,7 +1405,7 @@ async function refresh() {
     if (!passcode) return;
   }
   const busy = jobs.some((j) => ["queued", "running"].includes(j.status) || ["queued", "running"].includes(j.stems_status))
-    || (gpu && gpu.gpu.state !== "stopped");
+    || sources.some(transcribing) || (gpu && gpu.gpu.state !== "stopped");
   pollTimer = setTimeout(refresh, busy ? 4000 : 20000);
 }
 

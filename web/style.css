@@ -388,3 +388,82 @@ body.has-player { padding-bottom: 88px; }
 .daw-note.picked, .daw-ins.picked, .daw-rest.picked { outline: 2px solid #fff; outline-offset: 1px; z-index: 2; }
 .daw-ins.picked, .daw-rest.picked { background: #8f8fb0; }
 .daw-edit { position: absolute; z-index: 10; font-size: 13px; padding: 3px 6px; }
+
+/* ---- timeline editor: lyrics panel, word selection, tracks (daw.js) ---- */
+.daw-body { flex: 1; min-height: 0; display: flex; }
+.daw-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.daw-main .daw-scroll { flex: 1; }
+.daw-side { width: 290px; flex: none; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); min-height: 0; }
+.daw.no-side .daw-side { width: 40px; }
+.daw.no-side .daw-side > :not(.daw-side-head), .daw.no-side .daw-side-head > :not(#daw-side-toggle) { display: none; }
+.daw.no-side #daw-side-toggle { transform: scaleX(-1); }
+.daw-side-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.daw-side-head strong { flex: 1; }
+.daw-side-hint { margin: 6px 10px; }
+.daw-words { flex: 1; overflow: auto; padding: 4px 10px 16px; user-select: none; }
+.daw-side.editing .daw-words, .daw-side.editing .daw-side-hint { display: none; }
+.daw-lyrics-editor { display: none; flex: 1; flex-direction: column; gap: 6px; padding: 8px 10px; min-height: 0; }
+.daw-side.editing .daw-lyrics-editor { display: flex; }
+.daw-lyrics-editor textarea { flex: 1; min-height: 200px; font-size: 13px; }
+.row-actions { display: flex; gap: 6px; }
+.dw-section { margin: 12px 0 4px; padding-left: 6px; border-left: 3px solid; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); cursor: pointer; }
+.dw-section:hover { color: var(--text); }
+.dw-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 0; padding: 3px 0; font-size: 14px; line-height: 1.5; }
+.dw-grip { color: #5a5a70; cursor: grab; padding: 0 6px 0 0; font-size: 11px; letter-spacing: -2px; }
+.dw-grip:hover { color: var(--text); }
+.dw-word { padding: 0 3px; border-radius: 4px; cursor: grab; }
+.dw-word:hover { background: #24243a; }
+.dw-word.selected { background: var(--accent); color: #fff; }
+.dw-word.loose { color: var(--warn); text-decoration: underline dotted; }
+.dw-word.part { text-decoration: underline dotted var(--warn); }
+.dw-count { margin-left: auto; font-size: 10px; padding-left: 6px; }
+.dw-ghost { position: fixed; left: 0; top: 0; z-index: 30; pointer-events: none; padding: 3px 8px; border-radius: 6px; background: var(--accent); color: #fff; font-size: 13px; max-width: 300px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; box-shadow: 0 4px 14px rgba(0, 0, 0, .5); }
+.daw-marquee { position: absolute; top: 0; bottom: 0; background: rgba(255, 138, 31, .12); border: 1px dashed var(--accent-2); pointer-events: none; z-index: 5; box-sizing: border-box; }
+.daw-note.unsung { background: #4a4a5e; }
+.daw-syl.joined { border-right-style: dashed; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; padding: 4px 10px; cursor: pointer; }
+.seg button.on { background: var(--accent); color: #fff; }
+
+.daw-tracks-head { background: var(--panel-2); }
+.daw-tracks-head .daw-label { padding: 2px 4px; }
+.daw-tracks-hint { top: 4px; white-space: nowrap; color: var(--muted); }
+.daw-track-add { width: 100%; height: 100%; border: 0; border-radius: 4px; background: transparent; color: var(--accent-2); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+.daw-track-add:hover { background: #24243a; }
+.daw-track { background: #12121b; cursor: crosshair; }
+.daw-track-label { cursor: pointer; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 21px; }
+.daw-track-label:hover { background: #24243a; }
+.daw-track-sep { top: 0; bottom: 0; border-left: 1px dashed #2c2c3c; }
+.daw-track-block { top: 4px; height: 21px; border-radius: 4px; color: #fff; font-size: 11px; line-height: 21px; padding: 0 6px; overflow: hidden; white-space: nowrap; box-sizing: border-box; opacity: .9; pointer-events: none; }
+.daw-track-pop { position: absolute; z-index: 20; width: 340px; display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--panel); box-shadow: 0 10px 30px rgba(0, 0, 0, .5); }
+.daw-track-pop input[type="text"], .daw-track-pop select { width: 100%; box-sizing: border-box; }
+.dt-row { display: flex; align-items: center; gap: 6px; }
+.dt-row select, .dt-row input { flex: 1; }
+.dt-feel { display: flex; flex-wrap: wrap; gap: 4px; }
+.dt-feel .chip { font-size: 11px; padding: 2px 8px; }
+.chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.dt-phrase { padding: 6px 8px; border-radius: 6px; background: var(--panel-2); color: var(--text); }
+
+/* ---- what goes to YuE2 ---- */
+.yue-preview { width: min(760px, calc(100vw - 32px)); }
+.yue-preview > :not(.modal-head) { margin-left: 20px; margin-right: 20px; }
+.yue-preview { overflow: auto; padding-bottom: 16px; }
+.yue-preview h4 { margin: 14px 20px 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.yp-pre { white-space: pre-wrap; word-break: break-word; margin: 0 20px; padding: 10px 12px; border-radius: 8px; background: var(--panel-2); font-size: 12px; max-height: 260px; overflow: auto; }
+.yp-report { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.yp-report .ok { color: var(--ok); }
+.yp-report .warn { color: var(--warn); }
+.yp-structure { display: flex; flex-wrap: wrap; gap: 4px; }
+.yp-structure span { padding: 2px 8px; border-radius: 6px; font-size: 12px; background: #2a2a38; color: var(--muted); }
+.yp-structure span.sung { background: #3a2a24; color: var(--text); }
+
+/* ---- the create panel's preparation box and the source cards' score line ---- */
+.prep { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); }
+.prep-state { line-height: 1.5; }
+.prep-state .warn { color: var(--warn); }
+.prep-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.prep-actions:empty { display: none; }
+.source-score { margin-top: 6px; color: var(--muted); }
+.source-score.error { color: var(--warn); }
