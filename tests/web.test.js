@@ -155,6 +155,36 @@ test("compile hands the hum after the last syllable to the instrument note by no
   assert.ok(out.report.some((r) => /söylenen notaların yanındaki/.test(r.text)));
 });
 
+test("editNote place: a new note inside a rest, at a pitch", () => {
+  const model = ScoreModel.parse(ABC);
+  // Intro bar 1 ends with a rest (z8): put a 4-unit c (MIDI 72) 4 units into it.
+  const out = ScoreModel.editNote(model, "vocal", { bar: 0, note: 3 }, "place", { offset: 4, dur: 4, midi: 72 });
+  assert.strictEqual(out.model.bars[0].vocal, "c8d8e8z4c4");   // c = MIDI 72 in this dialect
+  assert.deepStrictEqual(out.sel, { bar: 0, note: 4 });
+  // A rest written in two parts (z4z for 5) is still one item, so sel finds the new note.
+  const odd = ScoreModel.editNote(model, "vocal", { bar: 0, note: 3 }, "place", { offset: 5, dur: 2, midi: 72 });
+  assert.strictEqual(odd.model.bars[0].vocal, "c8d8e8z4zc2z");
+  const picked = ScoreModel.voiceNotes(ScoreModel.parse(ScoreModel.serialize(odd.model).text), "vocal")[0].notes[odd.sel.note];
+  assert.ok(!picked.rest && picked.midi === 72, "sel is the new note after reading the score again");
+  assert.throws(() => ScoreModel.editNote(model, "vocal", { bar: 0, note: 0 }, "place", { midi: 72 }), /zaten nota/);
+  // In an empty bar of the other voice.
+  const ins = ScoreModel.editNote(model, "ins", { bar: 0, note: 0 }, "place", { offset: 8, dur: 8, midi: 60 });
+  assert.strictEqual(ins.model.bars[0].ins, "z8C8z16");
+});
+
+test("editNote longer goes over the barline into a rest, tied", () => {
+  const abc = ABC.replace("c8c8d8e8|f8e8d8z8|", "c8c8d8e8|z8e8d8f8|");
+  const model = ScoreModel.parse(abc);
+  // Verse bar 1 ends on e8; bar 2 starts with a rest.
+  const out = ScoreModel.editNote(model, "vocal", { bar: 2, note: 3 }, "longer", { step: 4 });
+  assert.strictEqual(out.model.bars[2].vocal, "c8c8d8e8-");
+  assert.strictEqual(out.model.bars[3].vocal, "e4z4e8d8f8");
+  const tl = Timeline.fromModel(out.model);
+  const held = tl.vocal.find((n) => n.bar === 2 && n.k === 3);
+  assert.strictEqual(held.u1 - held.u0, 12, "one held note of 8 + 4 units");
+  assert.throws(() => ScoreModel.editNote(out.model, "vocal", { bar: 3, note: 4 }, "longer", { step: 4 }), /notayla başlıyor/);
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
   try { fn(); console.log("ok  ", name); } catch (error) { failed++; console.log("FAIL", name, "\n   ", error.message); }

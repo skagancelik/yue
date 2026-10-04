@@ -83,7 +83,7 @@ async function openSourceDaw(item, lyrics = item.lyrics || "") {
     const own = lyrics === (item.lyrics || "");
     const opened = startDaw({
       ctx: "source", job: null, item, abc, lyrics, title: item.name,
-      origin: item.score_edited ? "bestenin düzeltilmiş notası" : "SheetSage2'nin çıkardığı nota",
+      origin: item.score_edited ? "bestenin düzeltilmiş notası" : transcriptOrigin(item),
       map: layoutMap(abc, lyrics, own && item.lyrics_layout ? LyricsLayout.normalize(item.lyrics_layout) : null),
       tracks: JSON.parse(JSON.stringify(item.tracks || [])).map((t) => ({ ...t, id: t.id || dawId() })),
     });
@@ -125,6 +125,7 @@ function startDaw({ ctx, job, item, origin, abc, lyrics, map, tracks, title }) {
   // Lengthen/shorten steps a musician thinks in, as L: units (only the ones the grid can hold).
   $("daw-step").replaceChildren(...[[16, "1/16"], [8, "1/8"], [4, "1/4"]]
     .filter(([den]) => unit % den === 0).map(([den, name]) => new Option(`adım ${name}`, String(unit / den))));
+  if (unit % 8 === 0) $("daw-step").value = String(unit / 8);   // new notes and drags in eighths
   $("daw-title").textContent = title;
   $("daw").classList.toggle("source-mode", ctx === "source");
   dawMsg(ctx === "source" && !(item.lyrics_layout && item.lyrics_layout.at && item.lyrics_layout.at.length === daw.map.length) && daw.map.length
@@ -132,6 +133,7 @@ function startDaw({ ctx, job, item, origin, abc, lyrics, map, tracks, title }) {
     : "");
   closeTrackEditor();
   $("daw").showModal();
+  renderVersions();
   renderDaw();
   renderDawWords();
   $("daw-scroll").scrollLeft = 0;
@@ -218,15 +220,18 @@ function renderDaw() {
   const row = Math.max(4, Math.min(16, Math.floor((free - 10) / (top - low + 1))));
   const rollHeight = (top - low + 1) * row + 10;
   const roll = lane("Melodi", rollHeight, "daw-roll");
+  daw.rollGeom = { el: roll, top, row };
   for (let m = low; m <= top; m++) if (m % 12 === 0) roll.append(el("div", "daw-c-line", { top: (top - m) * row + row - 1 + "px" }, `C${m / 12 - 1}`));
   for (const bar of tl.bars) roll.append(el("div", "daw-bar-line", { left: dawX(bar.t0) + "px" }));
   const span = (item) => ({ left: dawX(item.t0) + "px", width: Math.max(3, (item.t1 - item.t0) * daw.pps - 1) + "px" });
   const picked = (item) => daw.note && daw.note.voice === item.voice && daw.note.bar === item.bar && daw.note.k === item.k;
   const tag = (node, item) => { node.dataset.voice = item.voice; node.dataset.bar = item.bar; node.dataset.k = item.k; return node; };
+  // The right edge of a note: drag it to lengthen or shorten the note.
+  const grip = (box) => { box.append(el("div", "rz", null)); return box; };
   for (const note of tl.ins) {
     const box = tag(el("div", "daw-ins" + (picked(note) ? " picked" : ""), { ...span(note), top: (top - note.midi) * row + "px", height: row - 1 + "px" }), note);
-    box.title = `${note.name} · Enstrüman · ölçü ${note.bar + 1}`;
-    roll.append(box);
+    box.title = `${note.name} · Enstrüman · ölçü ${note.bar + 1} · sağ ucunu çek: uzat/kısalt`;
+    roll.append(grip(box));
   }
   const hasLyrics = sylls.length > 0;
   for (const note of tl.vocal) {
@@ -235,9 +240,9 @@ function renderDaw() {
     const box = tag(el("div", "daw-note" + state + (picked(note) ? " picked" : ""),
       { ...span(note), top: (top - note.midi) * row + "px", height: row - 1 + "px" }), note);
     box.dataset.n = note.number;
-    box.title = `${note.name} · ölçü ${note.bar + 1} · ${fmtTime(note.t0)}${state === " unsung" ? " · hecesi yok: düzenlemede ölçü tümüyle hecesizse enstrümana verilir, değilse YuE2 mırıldanabilir" : ""}`;
+    box.title = `${note.name} · ölçü ${note.bar + 1} · ${fmtTime(note.t0)} · sağ ucunu çek: uzat/kısalt${state === " unsung" ? " · hecesi yok: düzenlemede ölçü tümüyle hecesizse enstrümana verilir, değilse YuE2 mırıldanabilir" : ""}`;
     if (slot && !slot.hold && slot.index.some((g) => daw.sel.has(g))) box.classList.add("selected");
-    roll.append(box);
+    roll.append(grip(box));
     daw.els.notes.set(note.number, box);
   }
   for (const rest of tl.rests.vocal) {
@@ -293,7 +298,7 @@ function renderDaw() {
     add.title = "Bir enstrüman izi ekle: hangi enstrüman, nasıl ve nerede çalsın";
     head.querySelector(".daw-label").replaceChildren(add);
     head.append(el("div", "daw-tracks-hint small", { left: DAW_LEFT + 8 + "px" }, daw.tracks.length
-      ? "Şeritte sürükle: ölçüleri boya/sil · bölüme tıkla: o bölümü ekle/çıkar · ada tıkla: enstrümanı ve çalışını yaz"
+      ? "Şeritte tıkla: 1 ölçü · sürükle: istediğin kadar · çubuğun ucunu çek: uzat/kısalt · ortasından çek: taşı · çift tık: sil · Shift+tık: bütün bölüm · ada tıkla: enstrüman ve çalış"
       : "İz ekle: örn. coşkulu yaylılar nakaratlarda, yumuşak piyano baştan sona. YuE2'ye stil metni olarak gider."));
     lanes.append(head);
     daw.tracks.forEach((track, k) => {
@@ -306,14 +311,18 @@ function renderDaw() {
       label.title = `${Arrange.trackPhrase(track, ScoreModel.sections(daw.model), tl.bars.length)}\nTıkla: düzenle`;
       for (const s of tl.sections) row.append(el("div", "daw-track-sep", { left: dawX(s.t0) + "px" }));
       const ranges = track.bars || [[0, tl.bars.length - 1]];
-      for (const [a, b] of ranges) {
-        if (a >= tl.bars.length) continue;
+      ranges.forEach(([a, b], r) => {
+        if (a >= tl.bars.length) return;
         const z = Math.min(b, tl.bars.length - 1);
         const block = el("div", "daw-track-block", {
           left: dawX(tl.bars[a].t0) + "px", width: Math.max(4, (tl.bars[z].t1 - tl.bars[a].t0) * daw.pps - 2) + "px", background: dawTrackColor(k),
-        }, [...(track.feel || []).map((f) => Arrange.feelLabel[f] || f), track.lead ? "melodi" : ""].filter(Boolean).join(", "));
+        }, [...(track.feel || []).map((f) => Arrange.feelLabel[f] || f), track.lead ? "melodi" : ""].filter(Boolean).join(", ") || trackName(track));
+        block.dataset.r = r;
+        block.title = `ölçü ${a + 1}–${z + 1} · uçlarından çek: uzat/kısalt · ortasından çek: taşı · çift tık: sil`;
+        block.append(el("div", "tb-edge tb-left"), el("div", "tb-edge tb-right"));
         row.append(block);
-      }
+      });
+      if (!ranges.length) row.append(el("div", "daw-track-empty small", { left: DAW_LEFT + 8 + "px" }, "Bu iz henüz hiçbir yerde çalmıyor: başlayacağı ölçüye tıkla ya da sürükle"));
       lanes.append(row);
     });
   }
@@ -487,7 +496,7 @@ function renderDawBar() {
   else if (note) info = "↑/↓ yarım ses (Shift: oktav) · +/− uzat/kısalt · ←/→ önceki/sonraki · Delete: sus · N: notaya çevir";
   else if (daw.bars) info = "Seçili ölçülere bölüm adı ver ya da söylenen ve çalınan notaları değiştir.";
   else if (n) info = `${n} hece seçili · sürükle: bıraktığın notadan başlayarak notalara dizilir (Alt: aralıkları koru), önündekiler kayar · ←/→ bir nota kaydır · çift tık: harfleri düzelt · Delete: sil`;
-  else info = `Tıkla: ${daw.selMode === "word" ? "kelime" : "hece"} seç (Alt+tık: ${daw.selMode === "word" ? "tek hece" : "kelime"}) · boş yerden sürükle: alan seç · Shift: aralık · ⌘/Ctrl: ekle · notaya tıkla: perde/süre · Boşluk: çal`;
+  else info = `Tıkla: ${daw.selMode === "word" ? "kelime" : "hece"} seç (Alt+tık: ${daw.selMode === "word" ? "tek hece" : "kelime"}) · boş yerden sürükle: alan seç · Shift: aralık · ⌘/Ctrl: ekle · notaya tıkla: perde/süre · sağ ucunu çek: uzat · melodide boş yere çift tık: yeni nota · Boşluk: çal`;
   $("daw-info").textContent = info;
   $("daw-undo").disabled = !daw.history.length;
   $("daw-save").disabled = !dawDirty() && !daw.layoutFresh;
@@ -638,6 +647,12 @@ function dawNoteAction(name) {
   if (name === "prev" || name === "next") { stepDawNote(name === "next" ? 1 : -1); return; }
   if (scoreLocked()) return;
   const [op, arg] = NOTE_OPS[name];
+  if ((op === "longer" || op === "shorter") && !dawPicked().rest) {
+    // A held note grows or shrinks at its end, over barlines too.
+    const item = daw.tl[pick.voice].find((n) => n.bar === pick.bar && n.k === pick.k);
+    const step = Number($("daw-step").value) || 1;
+    if (item) { resizeDawNote(item, op === "longer" ? item.u1 + step : Math.max(item.u0 + 1, item.u1 - step)); return; }
+  }
   try {
     const result = ScoreModel.editNote(daw.model, pick.voice, { bar: pick.bar, note: pick.k }, op, { ...arg, step: Number($("daw-step").value) || 1 });
     dawScore(result.model, { voice: pick.voice, bar: result.sel.bar, k: result.sel.note }, null);
@@ -646,6 +661,103 @@ function dawNoteAction(name) {
   } catch (error) {
     dawMsg(error.message);
   }
+}
+
+// ---- lengthening and adding notes
+
+// The note of `voice` that starts at unit u0, and the last part of it (a held note is tied over
+// barlines: its length changes at the end).
+const noteStarting = (model, voice, u0) => Timeline.fromModel(model)[voice].find((n) => n.u0 === u0);
+function lastPart(model, voice, note) {
+  const bars = ScoreModel.voiceNotes(model, voice);
+  let bar = note.bar, k = note.k;
+  while (bars[bar].notes[k].tieOut && bar + 1 < bars.length) { bar++; k = 0; }
+  return { bar, note: k, part: bars[bar].notes[k] };
+}
+
+// The note starting at u0 made to end at unit `end`: it takes time from what follows (a rest, or
+// the next note, which gets shorter) and goes on over a barline into a rest; shorter, the time
+// becomes a rest. Returns { model, end, error }.
+function resizeScore(model, voice, u0, end) {
+  let note = noteStarting(model, voice, u0), error = null;
+  for (let guard = 0; note && note.u1 !== end && guard < 64; guard++) {
+    const { bar, note: k, part } = lastPart(model, voice, note);
+    try {
+      if (end > note.u1) model = ScoreModel.editNote(model, voice, { bar, note: k }, "longer", { step: end - note.u1 }).model;
+      else {
+        const cut = note.u1 - end;
+        if (part.contIn && part.dur <= cut) model = ScoreModel.editNote(model, voice, { bar, note: k }, "rest").model;
+        else if (part.dur > cut) model = ScoreModel.editNote(model, voice, { bar, note: k }, "shorter", { step: cut }).model;
+        else break;
+      }
+    } catch (e) { error = e.message; break; }
+    const next = noteStarting(model, voice, u0);
+    if (!next || next.u1 === note.u1) { note = next; break; }
+    note = next;
+  }
+  return { model, end: note ? note.u1 : u0, error };
+}
+
+function resizeDawNote(item, end) {
+  if (scoreLocked() || end === item.u1) return;
+  const out = resizeScore(daw.model, item.voice, item.u0, end);
+  if (out.model === daw.model) { dawMsg(out.error || "Nota bu kadar değiştirilemedi."); return; }
+  dawScore(out.model, daw.note, null);
+  if (out.end !== end) dawMsg(`${$("daw-msg").textContent} ${out.error || "Nota istenen yere kadar uzayamadı."}`.trim());
+}
+
+// Unit position under the pointer (fractional).
+function unitAt(clientX) {
+  const t = Math.max(0, Math.min(daw.tl.duration - 1e-6, timeAt(clientX)));
+  const bar = daw.tl.bars[barAt(t)];
+  return bar.u0 + ((t - bar.t0) / (bar.t1 - bar.t0)) * (bar.u1 - bar.u0);
+}
+
+// Dragging a note's right edge: the length follows the pointer in steps; applied on release.
+function dragNoteEnd(event, box) {
+  const item = daw.tl[box.dataset.voice].find((n) => n.bar === Number(box.dataset.bar) && n.k === Number(box.dataset.k));
+  if (!item || scoreLocked()) return;
+  const step = Number($("daw-step").value) || 1;
+  const perUnit = (item.t1 - item.t0) / (item.u1 - item.u0);
+  const least = Math.min(step, item.u1 - item.u0);
+  let end = item.u1;
+  box.classList.add("resizing");
+  const move = (e) => {
+    end = Math.min(daw.tl.bars[daw.tl.bars.length - 1].u1, item.u0 + Math.max(least, Math.round((unitAt(e.clientX) - item.u0) / step) * step));
+    box.style.width = Math.max(3, (end - item.u0) * perUnit * daw.pps - 1) + "px";
+    dawMsg(`Süre: ${durationText(end - item.u0)}`);
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    box.classList.remove("resizing");
+    if (end === item.u1) { renderDaw(); dawMsg(""); return; }
+    daw.note = { voice: item.voice, bar: item.bar, k: item.k };
+    resizeDawNote(item, end);
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
+
+// Double click on an empty place of the melody lane: a new note there (Alt: in the instrument),
+// at the pitch under the pointer, one step long, on the step grid.
+function placeDawNote(event) {
+  if (scoreLocked()) return;
+  const voice = event.altKey ? "ins" : "vocal";
+  const step = Number($("daw-step").value) || 1;
+  const raw = unitAt(event.clientX);
+  const bar = daw.tl.bars[barAt(timeAt(event.clientX))];
+  const u = bar.u0 + Math.floor((raw - bar.u0) / step) * step;
+  const rest = daw.tl.rests[voice].find((x) => x.u0 <= u && u < x.u1);
+  if (!rest) { dawMsg(voice === "vocal" ? "Burada vokal notası var; boş bir yere çift tıkla (Alt+çift tık: enstrüman notası)." : "Burada enstrüman notası var."); return; }
+  const { el: lane, top, row } = daw.rollGeom;
+  const midi = Math.max(36, Math.min(96, top - Math.floor((event.clientY - lane.getBoundingClientRect().top) / row)));
+  try {
+    const result = ScoreModel.editNote(daw.model, voice, { bar: rest.bar, note: rest.k }, "place", { offset: u - rest.u0, dur: step, midi });
+    dawScore(result.model, { voice, bar: result.sel.bar, k: result.sel.note }, null);
+    playPitch(midi);
+    if (!$("daw-msg").textContent) dawMsg(`${voice === "vocal" ? "Vokal" : "Enstrüman"} notası eklendi; sağ ucunu çekerek uzat, ↑/↓ ile perdesini değiştir.`);
+  } catch (error) { dawMsg(error.message); }
 }
 
 // The next or previous note or rest of the picked note's voice.
@@ -879,35 +991,55 @@ function marquee(event) {
 
 // Painting a track's bars: a drag adds (or, started on a painted bar, removes) the bars it crosses;
 // a click adds or removes the whole section under it.
+// Bar ranges of a track: a click on an empty place adds that bar, a drag adds the bars it crosses;
+// a range's edges stretch or shrink it, its middle moves it; Shift+click adds the whole section.
+// Ranges that touch become one.
 function paintTrack(event, k) {
   const track = daw.tracks[k];
   const count = daw.tl.bars.length;
   const first = barAt(timeAt(event.clientX));
-  const on = barSet(track.bars, count);
-  const erase = on.has(first);
+  const ranges = (track.bars || [[0, count - 1]]).map((r) => [...r]);
+  const block = event.target.closest(".daw-track-block");
+  const r = block ? Number(block.dataset.r) : -1;
+  // The ends of a bar (10 px, more forgiving than the drawn handles) stretch it; the rest moves it.
+  const box = block && block.getBoundingClientRect();
+  const edge = box ? Math.min(10, box.width / 3) : 0;
+  const mode = !block ? "paint" : event.clientX - box.left < edge ? "left" : box.right - event.clientX < edge ? "right" : "move";
   const before = dawSnapshot();
   let moved = false;
-  const apply = (a, b) => {
-    const next = new Set(on);
-    for (let i = a; i <= b; i++) if (erase) next.delete(i); else next.add(i);
-    track.bars = next.size === count ? null : toRanges(next);
+  const clamp = (b) => Math.max(0, Math.min(count - 1, b));
+  const apply = (next) => {
+    const on = barSet(next.filter(([a, z]) => a <= z), count);
+    track.bars = on.size === count ? null : toRanges(on);
     daw.tracksDirty = true;
     renderDaw();
   };
+  if (event.shiftKey && mode === "paint") {
+    const run = daw.tl.sections.find((s) => s.from <= first && first <= s.to) || { from: first, to: first };
+    daw.history.push(before);
+    apply([...ranges, [run.from, run.to]]);
+    renderDawBar();
+    return;
+  }
   const move = (e) => {
-    const b = barAt(timeAt(e.clientX));
+    const b = clamp(barAt(timeAt(e.clientX)));
     if (b === first && !moved) return;
     moved = true;
-    apply(Math.min(first, b), Math.max(first, b));
+    const next = ranges.map((x) => [...x]);
+    if (mode === "paint") next.push([Math.min(first, b), Math.max(first, b)]);
+    else if (mode === "left") next[r][0] = Math.min(b, next[r][1]);
+    else if (mode === "right") next[r][1] = Math.max(b, next[r][0]);
+    else {
+      const shift = Math.max(-ranges[r][0], Math.min(count - 1 - ranges[r][1], b - first));
+      next[r] = [ranges[r][0] + shift, ranges[r][1] + shift];
+    }
+    apply(next);
   };
   const up = () => {
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", up);
-    if (!moved) {
-      const run = daw.tl.sections.find((s) => s.from <= first && first <= s.to) || { from: first, to: first };
-      apply(run.from, run.to);
-    }
-    daw.history.push(before);
+    if (!moved && mode === "paint") apply([...ranges, [first, first]]);
+    if (moved || mode === "paint") daw.history.push(before);
     renderDawBar();
   };
   window.addEventListener("pointermove", move);
@@ -973,6 +1105,7 @@ $("daw-scroll").addEventListener("pointerdown", (event) => {
     return;
   }
   const noteBox = target.closest(".daw-note, .daw-ins, .daw-rest");
+  if (noteBox && target.closest(".rz") && daw.tray == null) { dragNoteEnd(event, noteBox); return; }
   if (noteBox) {
     if (daw.tray != null && noteBox.dataset.n != null) {
       const out = Align.flow(daw.map, [daw.tray], Number(noteBox.dataset.n), dawCount());
@@ -991,6 +1124,18 @@ $("daw-scroll").addEventListener("pointerdown", (event) => {
 });
 
 $("daw-scroll").addEventListener("dblclick", (event) => {
+  if (event.target.closest(".daw-roll") && !event.target.closest(".daw-note, .daw-ins, .daw-label")) { placeDawNote(event); return; }
+  const trackBlock = event.target.closest(".daw-track-block");
+  if (trackBlock) {
+    const track = daw.tracks[Number(trackBlock.closest(".daw-track").dataset.track)];
+    const ranges = (track.bars || [[0, daw.tl.bars.length - 1]]).filter((_, r) => r !== Number(trackBlock.dataset.r));
+    daw.history.push(dawSnapshot());
+    track.bars = ranges;
+    daw.tracksDirty = true;
+    renderDaw();
+    dawMsg("Çubuk silindi (geri alınabilir).");
+    return;
+  }
   const block = event.target.closest(".daw-syl");
   if (block) editDawSyllable(Number(block.dataset.g), block);
 });
@@ -1127,7 +1272,7 @@ $("daw-side-toggle").addEventListener("click", () => {
 
 function addTrack() {
   daw.history.push(dawSnapshot());
-  daw.tracks.push({ id: dawId(), instrument: "strings", feel: [], text: "", bars: null, lead: false });
+  daw.tracks.push({ id: dawId(), instrument: "strings", feel: [], text: "", bars: [], lead: false });
   daw.tracksDirty = true;
   renderDaw();
   const label = document.querySelector(`.daw-track[data-track="${daw.tracks.length - 1}"] .daw-label`);
@@ -1180,7 +1325,8 @@ function editTrack(change) {
 function renderTrackPhrase() {
   const track = daw.tracks[daw.trackOpen];
   if (!track) return;
-  $("dt-phrase").textContent = Arrange.trackPhrase(track, ScoreModel.sections(daw.model), daw.tl.bars.length) || "—";
+  $("dt-phrase").textContent = Arrange.trackPhrase(track, ScoreModel.sections(daw.model), daw.tl.bars.length)
+    || "— (henüz bir yere çubuk eklenmedi; şeritte başlayacağı ölçüye tıkla ya da sürükle)";
   for (const chip of $("dt-feel").children) chip.classList.toggle("on", (track.feel || []).includes(chip.dataset.feel));
 }
 
@@ -1238,6 +1384,7 @@ $("daw-save").addEventListener("click", async () => {
   try {
     if (daw.scoreDirty && daw.item) {
       updateSource(await api(`/sources/${daw.item.id}/score`, { method: "PUT", body: JSON.stringify({ abc: daw.abc }) }));
+      setTimeout(renderVersions);
       daw.item = sources.find((s) => s.id === daw.item.id);
       daw.origin = "bestenin düzeltilmiş notası";
       daw.scoreDirty = false;
@@ -1305,15 +1452,78 @@ $("daw-reset").addEventListener("click", async () => {
       closeDaw();
       return;
     }
-    const model = ScoreModel.parse(abc), tl = Timeline.fromModel(model);
-    dawPause();
-    if (daw.synth) { daw.synth.stop(); daw.synth = null; }
-    const map = carryMap(daw.tl, tl, daw.map);
-    Object.assign(daw, { model, abc, tl, map, origin: daw.item.transcript_url ? "SheetSage2'nin çıkardığı nota" : "bu düzenlemenin notası",
-      history: [], note: null, bars: null, scoreDirty: false });
-    renderDaw();
+    replaceScore(abc, daw.item.transcript_url ? transcriptOrigin(daw.item) : "bu düzenlemenin notası");
     dawMsg("Düzeltme silindi; özgün notaya dönüldü.");
   } catch (error) { dawMsg(`Silinemedi: ${error.message}`); }
+});
+
+// A different score in the editor (the original, another extraction): the syllables go to the
+// notes starting at the same moments; the undo history starts again.
+function replaceScore(abc, origin) {
+  const model = ScoreModel.parse(abc), tl = Timeline.fromModel(model);
+  dawPause();
+  if (daw.synth) { daw.synth.stop(); daw.synth = null; }
+  const map = carryMap(daw.tl, tl, daw.map);
+  if (map.some((n, g) => n !== daw.map[g])) daw.layoutDirty = true;
+  Object.assign(daw, { model, abc, tl, map, origin, history: [], note: null, bars: null, scoreDirty: false });
+  renderDaw();
+}
+
+// ---- the source's melody extractions (versions)
+
+const fmtStamp = (seconds) => new Date(seconds * 1000).toLocaleString("tr-TR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+
+function transcriptOrigin(item) {
+  const versions = item.transcripts || [];
+  const k = versions.findIndex((v) => v.active);
+  return k < 0 ? "SheetSage2'nin çıkardığı nota" : `çıkarma v${k + 1}${versions.length > 1 ? ` / ${versions.length}` : ""}`;
+}
+
+function renderVersions() {
+  const versions = (daw.ctx === "source" && daw.item && daw.item.transcripts) || [];
+  $("daw-versions").classList.toggle("hidden", versions.length < 2 && !(daw.item && daw.item.score_edited && versions.length));
+  $("daw-version").replaceChildren(...versions.map((v, k) => {
+    const option = new Option(`v${k + 1} · ${fmtStamp(v.at)}${v.origin === "cover" ? " · düzenlemeden" : ""}${v.active ? " ✓" : ""}`, v.id);
+    option.selected = v.active;
+    return option;
+  }));
+  $("daw-version-delete").disabled = versions.filter((v) => !v.active).length === 0;
+}
+
+$("daw-version").addEventListener("change", async () => {
+  const item = daw.item;
+  const version = (item.transcripts || []).find((v) => v.id === $("daw-version").value);
+  if (!version || (version.active && !item.score_edited)) { renderVersions(); return; }
+  const warn = [item.score_edited ? "Bestenin düzeltilmiş notası silinecek (geri alınamaz)." : "",
+    daw.scoreDirty ? "Kaydedilmemiş nota değişiklikleri silinecek." : ""].filter(Boolean).join(" ");
+  if (warn && !confirm(`Bu sürümün notası açılsın mı? ${warn} Heceler notalarına zamanla taşınır.`)) { renderVersions(); return; }
+  try {
+    if (item.score_edited) updateSource(await api(`/sources/${item.id}/score`, { method: "DELETE" }));
+    updateSource(await api(`/sources/${item.id}`, { method: "PATCH", body: JSON.stringify({ transcript: version.id }) }));
+    daw.item = sources.find((s) => s.id === item.id);
+    replaceScore(await fetchText(daw.item.transcript_url, "nota sürümü"), transcriptOrigin(daw.item));
+    dawMsg(`v${daw.item.transcripts.findIndex((v) => v.active) + 1} açıldı; yeni düzenlemeler bu sürümle yapılır.`);
+  } catch (error) { dawMsg(`Sürüm açılamadı: ${error.message}`); }
+  renderVersions();
+});
+
+$("daw-version-delete").addEventListener("click", async () => {
+  const item = daw.item;
+  const versions = item.transcripts || [];
+  const others = versions.map((v, k) => (v.active ? null : `v${k + 1}`)).filter(Boolean);
+  if (!others.length) return;
+  const answer = prompt(`Hangi nota sürümü silinsin? (${others.join(", ")}; kullanılan sürüm silinemez)`, others[0]);
+  if (answer == null) return;
+  const k = Number(String(answer).trim().replace(/^v/i, "")) - 1;
+  if (!versions[k] || versions[k].active) { dawMsg("Böyle silinebilir bir sürüm yok."); return; }
+  try {
+    updateSource(await api(`/sources/${item.id}`, { method: "PATCH", body: JSON.stringify({ delete_transcript: item.transcripts[k].id }) }));
+    daw.item = sources.find((s) => s.id === item.id);
+    daw.origin = item.score_edited ? daw.origin : transcriptOrigin(daw.item);
+    dawMsg("Sürüm silindi.");
+  } catch (error) { dawMsg(`Silinemedi: ${error.message}`); }
+  renderVersions();
+  renderDawBar();
 });
 
 function closeDaw() {

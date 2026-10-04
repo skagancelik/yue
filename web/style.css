@@ -467,3 +467,18 @@ body.has-player { padding-bottom: 88px; }
 .prep-actions:empty { display: none; }
 .source-score { margin-top: 6px; color: var(--muted); }
 .source-score.error { color: var(--warn); }
+
+/* ---- note edges, track bars, score versions ---- */
+.daw-note, .daw-ins { overflow: visible; }
+.rz { position: absolute; top: -2px; bottom: -2px; right: -3px; width: 7px; cursor: ew-resize; z-index: 2; }
+.daw-note:hover .rz, .daw-ins:hover .rz, .resizing .rz { background: rgba(255, 255, 255, .55); border-radius: 2px; }
+.daw-note.resizing, .daw-ins.resizing { outline: 1px dashed #fff; z-index: 3; }
+.daw-roll { cursor: cell; }
+.daw-track-block { pointer-events: auto; cursor: grab; }
+.daw-track-block:active { cursor: grabbing; }
+.tb-edge { position: absolute; top: 0; bottom: 0; width: 8px; cursor: ew-resize; }
+.tb-left { left: 0; border-radius: 4px 0 0 4px; }
+.tb-right { right: 0; border-radius: 0 4px 4px 0; }
+.daw-track-block:hover .tb-edge { background: rgba(255, 255, 255, .3); }
+.daw-track-empty { top: 7px; white-space: nowrap; color: var(--muted); pointer-events: none; }
+.daw-versions { display: inline-flex; align-items: center; gap: 4px; }
