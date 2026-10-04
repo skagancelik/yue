@@ -366,8 +366,24 @@ function renderDawTray() {
   const chips = loose.slice(0, 80).map((g) => {
     const chip = el("button", "daw-loose" + (daw.tray === g || daw.sel.has(g) ? " on" : ""), null, sylls[g].text);
     chip.type = "button";
-    chip.title = `${daw.words.sections[sylls[g].section].tag || "söz"}: notaya düşmüyor. Sağdaki söz listesinden sürükle ya da seç, sonra boş bir vokal notasına tıkla; çift tıkla: sil.`;
-    chip.onclick = () => { daw.tray = daw.tray === g ? null : g; daw.sel.clear(); daw.note = null; refreshDawSelection(); };
+    chip.title = `${daw.words.sections[sylls[g].section].tag || "söz"}: notaya düşmüyor. Tutup bir vokal notasının üstüne sürükle (ya da tıkla, sonra notaya tıkla); çift tıkla: harfleri düzelt.`;
+    // Dragged onto the timeline it goes on the note it is dropped on; a click picks it, and a
+    // click on a vocal note then puts it there.
+    chip.onpointerdown = (event) => {
+      if (event.button) return;
+      event.preventDefault();
+      const x0 = event.clientX, y0 = event.clientY, was = daw.tray;
+      Object.assign(daw, { tray: null, note: null, bars: null, anchor: g });
+      daw.sel = new Set([g]);
+      window.addEventListener("pointerup", (e) => {
+        if (Math.hypot(e.clientX - x0, e.clientY - y0) >= 4) return;
+        daw.tray = was === g ? null : g;
+        daw.sel.clear();
+        refreshDawSelection();
+        for (const other of $("daw-tray").querySelectorAll(".daw-loose")) other.classList.toggle("on", other === chip && daw.tray === g);
+      }, { once: true });
+      dragSelection(event, g, { fromPanel: true });
+    };
     chip.ondblclick = () => editDawSyllable(g, chip);
     return chip;
   });
