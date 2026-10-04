@@ -187,13 +187,21 @@ function showSource(name, url, uploaded) {
   $("upload-bar").style.width = uploaded ? "100%" : "0";
 }
 
+// The lyrics the timeline editor laid out on the source's notes, when it did: they are what a
+// cover is made with (the editor is the reference; the form follows it).
+function editorLyrics(item) {
+  const at = item && item.lyrics_layout && item.lyrics_layout.at;
+  const lyrics = item && (item.lyrics || "").trim();
+  return at && lyrics && at.length === LyricsLayout.allSyllables(lyrics).length ? lyrics : null;
+}
+
 function selectSource(item) {
   source = { id: item.id, name: item.name, url: item.url, folder_id: item.folder_id };
   showSource(item.name, item.url, true);
   if (!$("title").value) $("title").value = item.name.replace(/\.[^.]+$/, "") + " (düzenleme)";
   // A source remembers the style and lyrics it was last used with.
   if (item.style) { $("style").value = item.style; $("style-set").value = ""; $("style-delete").classList.add("hidden"); }
-  if (item.lyrics) $("lyrics").value = item.lyrics;
+  if (item.lyrics) $("lyrics").value = editorLyrics(item) || item.lyrics;
   updateCreate();
   renderSources();
 }
@@ -506,6 +514,9 @@ document.querySelectorAll(".chip.tag").forEach((button) => button.addEventListen
 }));
 
 ["style", "lyrics", "title"].forEach((id) => $(id).addEventListener("input", updateCreate));
+// Whether the form's lyrics are still the timeline's is told under the song as they are typed.
+let lyricsCheck = 0;
+$("lyrics").addEventListener("input", () => { clearTimeout(lyricsCheck); lyricsCheck = setTimeout(renderSources, 400); });
 $("style").addEventListener("input", () => {
   const set = styles.find((s) => s.id === $("style-set").value);
   if (set && set.style !== $("style").value.trim()) { $("style-set").value = ""; $("style-delete").classList.add("hidden"); }
@@ -543,11 +554,10 @@ function renderPrep() {
   } else {
     const summary = scoreSummary(item).text;
     lines.push(summary);
-    const lyrics = $("lyrics").value.trim();
-    const saved = item.lyrics_layout && item.lyrics_layout.at && lyrics === (item.lyrics || "").trim()
-      && item.lyrics_layout.at.length === LyricsLayout.allSyllables(lyrics).length;
-    if (lyrics && !saved) lines.push('<span class="warn">⚠ Bu sözün hece yerleşimi kayıtlı değil; heceler melodiye otomatik yerleştirilecek. 🎛 ile kontrol etmen önerilir.</span>');
-    else if (lyrics) lines.push("Hece yerleşimi, hecesiz ölçüler (enstrümana verilir), bölüm adları ve izler YuE2'nin okuyacağı notaya, söze ve stile çevrilecek.");
+    const lyrics = $("lyrics").value.trim(), edited = editorLyrics(item);
+    if (edited && lyrics && lyrics !== edited) lines.push('<span class="warn">⚠ Formdaki söz zaman çizgisindekinden farklı. Düzenleme zaman çizgisindeki sözle ve hece yerleşimiyle yapılır. Formdakini kullanmak istiyorsan 🎛 ile aç (formdaki söz açılır), hecelerini yerleştirip kaydet.</span>');
+    else if (edited) lines.push("Söz, hece yerleşimi, hecesiz ölçüler (enstrümana verilir), bölüm adları ve izler zaman çizgisinden alınıp YuE2'nin okuyacağı notaya, söze ve stile çevrilecek.");
+    else if (lyrics) lines.push('<span class="warn">⚠ Bu söz henüz zaman çizgisinde notaya yerleştirilmedi; heceler melodiye otomatik yerleştirilecek. 🎛 ile açıp kontrol edip kaydetmen önerilir.</span>');
   }
   $("prep-state").innerHTML = lines.map((l) => `<div>${l.startsWith("<span") ? l : escapeHtml(l)}</div>`).join("");
   $("prep-progress").classList.toggle("hidden", !busy);
@@ -596,9 +606,11 @@ async function sourceAbc(item) {
 async function prepareSource(item, lyrics, style) {
   const abc = await sourceAbc(item);
   let map = null;
-  const at = item.lyrics_layout && item.lyrics_layout.at;
-  if (at && lyrics === (item.lyrics || "").trim()) {
-    try { map = Timeline.mapFromOnsets(Timeline.build(abc), at); } catch (error) { map = null; }
+  // The timeline editor is the reference: its lyrics and layout win over what the form says.
+  const edited = editorLyrics(item);
+  if (edited) {
+    lyrics = edited;
+    try { map = Timeline.mapFromOnsets(Timeline.build(abc), item.lyrics_layout.at); } catch (error) { map = null; }
   }
   return Arrange.compile({ abc, lyrics, map, tracks: item.tracks || [], style });
 }
@@ -1356,6 +1368,8 @@ function reuse(job) {
   $("title").value = job.title;
   $("style").value = job.style_base || job.style;
   $("lyrics").value = job.lyrics;
+  // What was sent is the compiled lyrics; a source laid out in the timeline keeps the editor's.
+  if (saved && editorLyrics(saved)) $("lyrics").value = editorLyrics(saved);
   updateCreate();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
