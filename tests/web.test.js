@@ -185,6 +185,24 @@ test("editNote longer goes over the barline into a rest, tied", () => {
   assert.throws(() => ScoreModel.editNote(out.model, "vocal", { bar: 3, note: 4 }, "longer", { step: 4 }), /notayla başlıyor/);
 });
 
+test("moveNote: a note slides into silence, over a barline tied, never onto another note", () => {
+  const model = ScoreModel.parse(ABC);
+  const out = ScoreModel.moveNote(model, "vocal", 16, 24, 76);   // intro e8 to the end of bar 1
+  assert.strictEqual(out.model.bars[0].vocal, "c8d8z8e8");
+  assert.deepStrictEqual(out.sel, { bar: 0, note: 3 });
+  const up = ScoreModel.moveNote(model, "vocal", 16, 20, 77);    // and a semitone up
+  assert.strictEqual(up.model.bars[0].vocal, "c8d8z4f8z4");
+  assert.throws(() => ScoreModel.moveNote(model, "vocal", 8, 12, 74), /başka nota/);
+  const abc = ABC.replace("c8c8d8e8|f8e8d8z8|", "c8c8d8e8|z8e8d8f8|");
+  const tied = ScoreModel.moveNote(ScoreModel.parse(abc), "vocal", 88, 92, 76);
+  assert.strictEqual(tied.model.bars[2].vocal, "c8c8d8z4e4-");
+  assert.strictEqual(tied.model.bars[3].vocal, "e4z4e8d8f8");
+  // The held note moves back as one note.
+  const back = ScoreModel.moveNote(tied.model, "vocal", 92, 88, 76);
+  assert.strictEqual(back.model.bars[2].vocal, "c8c8d8e8");
+  assert.strictEqual(back.model.bars[3].vocal, "z8e8d8f8");
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
   try { fn(); console.log("ok  ", name); } catch (error) { failed++; console.log("FAIL", name, "\n   ", error.message); }

@@ -230,7 +230,7 @@ function renderDaw() {
   const grip = (box) => { box.append(el("div", "rz", null)); return box; };
   for (const note of tl.ins) {
     const box = tag(el("div", "daw-ins" + (picked(note) ? " picked" : ""), { ...span(note), top: (top - note.midi) * row + "px", height: row - 1 + "px" }), note);
-    box.title = `${note.name} · Enstrüman · ölçü ${note.bar + 1} · sağ ucunu çek: uzat/kısalt`;
+    box.title = `${note.name} · Enstrüman · ölçü ${note.bar + 1} · sürükle: taşı · sağ ucunu çek: uzat/kısalt`;
     roll.append(grip(box));
   }
   const hasLyrics = sylls.length > 0;
@@ -240,7 +240,7 @@ function renderDaw() {
     const box = tag(el("div", "daw-note" + state + (picked(note) ? " picked" : ""),
       { ...span(note), top: (top - note.midi) * row + "px", height: row - 1 + "px" }), note);
     box.dataset.n = note.number;
-    box.title = `${note.name} · ölçü ${note.bar + 1} · ${fmtTime(note.t0)} · sağ ucunu çek: uzat/kısalt${state === " unsung" ? " · hecesi yok: düzenlemede ölçü tümüyle hecesizse enstrümana verilir, değilse YuE2 mırıldanabilir" : ""}`;
+    box.title = `${note.name} · ölçü ${note.bar + 1} · ${fmtTime(note.t0)} · sürükle: taşı · sağ ucunu çek: uzat/kısalt${state === " unsung" ? " · hecesi yok: düzenlemede ölçü tümüyle hecesizse enstrümana verilir, değilse YuE2 mırıldanabilir" : ""}`;
     if (slot && !slot.hold && slot.index.some((g) => daw.sel.has(g))) box.classList.add("selected");
     roll.append(grip(box));
     daw.els.notes.set(note.number, box);
@@ -614,12 +614,13 @@ function dawChange(next) {
   if (lyricsChanged) renderDawWords();
 }
 
-// A new score: the synth must be primed again and the syllables follow their notes by time.
-function dawScore(model, note, bars) {
+// A new score: the synth must be primed again and the syllables follow their notes by time
+// (or keep `keepMap`, when the notes stay in order and only one moved).
+function dawScore(model, note, bars, keepMap) {
   const abc = ScoreModel.serialize(model).text;
   const tl = Timeline.build(abc);
   daw.history.push(dawSnapshot());
-  const map = carryMap(daw.tl, tl, daw.map);
+  const map = keepMap || carryMap(daw.tl, tl, daw.map);
   if (map.some((n, g) => (n == null) !== (daw.map[g] == null))) daw.layoutDirty = true;
   dawPause();
   if (daw.synth) { daw.synth.stop(); daw.synth = null; }
@@ -734,6 +735,43 @@ function dragNoteEnd(event, box) {
     if (end === item.u1) { renderDaw(); dawMsg(""); return; }
     daw.note = { voice: item.voice, bar: item.bar, k: item.k };
     resizeDawNote(item, end);
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
+
+// Dragging a note by its body: left/right on the step grid, up/down by semitones; it stays between
+// its neighbours, so the notes keep their order and their syllables. A click without a drag picks it.
+function dragNote(event, box, item) {
+  const x0 = event.clientX, y0 = event.clientY;
+  const notes = daw.tl[item.voice], at = notes.indexOf(item);
+  const lo = at > 0 ? notes[at - 1].u1 : 0;
+  const hi = (at + 1 < notes.length ? notes[at + 1].u0 : daw.tl.bars[daw.tl.bars.length - 1].u1) - (item.u1 - item.u0);
+  const step = Number($("daw-step").value) || 1;
+  const { row } = daw.rollGeom;
+  let moved = false, to = item.u0, midi = item.midi;
+  const move = (e) => {
+    if (!moved && Math.abs(e.clientX - x0) + Math.abs(e.clientY - y0) < 4) return;
+    if (!moved && scoreLocked()) { window.removeEventListener("pointermove", move); return; }
+    moved = true;
+    box.classList.add("resizing");
+    const du = (e.clientX - x0) / daw.pps / daw.tl.perUnit;
+    to = Math.max(lo, Math.min(hi, item.u0 + Math.round(du / step) * step));
+    const pitch = Math.max(36, Math.min(96, item.midi - Math.round((e.clientY - y0) / row)));
+    if (pitch !== midi) playPitch(pitch);
+    midi = pitch;
+    box.style.transform = `translate(${(to - item.u0) * daw.tl.perUnit * daw.pps}px, ${(item.midi - midi) * row}px)`;
+    dawMsg(`${fmtTime(to * daw.tl.perUnit)} · ${["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"][midi % 12]}${Math.floor(midi / 12) - 1}`);
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    if (!moved) { pickDawNote(item); return; }
+    if (to === item.u0 && midi === item.midi) { renderDaw(); dawMsg(""); return; }
+    try {
+      const result = ScoreModel.moveNote(daw.model, item.voice, item.u0, to, midi);
+      dawScore(result.model, { voice: item.voice, bar: result.sel.bar, k: result.sel.note }, null, daw.map);
+    } catch (error) { renderDaw(); dawMsg(error.message); }
   };
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", up);
@@ -1117,7 +1155,8 @@ $("daw-scroll").addEventListener("pointerdown", (event) => {
     }
     const { voice } = noteBox.dataset, bar = Number(noteBox.dataset.bar), k = Number(noteBox.dataset.k);
     const item = [...daw.tl[voice], ...daw.tl.rests[voice]].find((x) => x.bar === bar && x.k === k);
-    if (item) pickDawNote(item);
+    if (item && item.midi != null) dragNote(event, noteBox, item);
+    else if (item) pickDawNote(item);
     return;
   }
   marquee(event);

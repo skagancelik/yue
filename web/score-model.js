@@ -472,13 +472,79 @@ const ScoreModel = (() => {
     return { model: out, sel: { bar: sel.bar, note: index } };
   }
 
+  // A note moved: the note of `voice` that starts at unit u0 (with every bar it is held over) goes
+  // to start at unit `to`, at `midi`; where it was becomes rest. Its new place must be silent; over
+  // a barline it is tied. Returns { model, sel } or throws an Error with a message for the user.
+  function moveNote(model, voice, u0, to, midi) {
+    const all = voiceNotes(model, voice);
+    const starts = [];
+    let total = 0;
+    for (const bar of all) { starts.push(total); total += bar.units; }
+    const bars = new Map();
+    const get = (b) => {
+      if (all[b].error) throw new Error(`Bu ölçü düzenlenemiyor: ${all[b].error}`);
+      if (!bars.has(b)) bars.set(b, copyNotes(all[b].notes));
+      return bars.get(b);
+    };
+    const joinRests = (list) => {
+      for (let k = list.length - 1; k > 0; k--) if (list[k].rest && list[k - 1].rest) { list[k - 1].dur += list[k].dur; list.splice(k, 1); }
+    };
+    const barOf = (u) => starts.findIndex((s, b) => s <= u && u < s + all[b].units);
+
+    // The note, silenced part by part.
+    let b = barOf(u0), k = -1;
+    if (b >= 0) for (let i = 0, x = starts[b]; i < all[b].notes.length; x += all[b].notes[i].dur, i++) if (x === u0) k = i;
+    const first = b >= 0 && k >= 0 ? all[b].notes[k] : null;
+    if (!first || first.rest || first.contIn) throw new Error("Nota bulunamadı");
+    if (midi < 36 || midi > 96) throw new Error("Bu perde nota aralığının dışında");
+    let dur = 0;
+    for (;;) {
+      const list = get(b), part = list[k];
+      dur += part.dur;
+      list[k] = { rest: true, dur: part.dur, tieOut: false, contIn: false };
+      if (!part.tieOut || b + 1 >= all.length) break;
+      b++; k = 0;
+    }
+    if (to < 0 || to + dur > total) throw new Error("Nota şarkının dışına taşınamaz");
+
+    // The new place, bar by bar.
+    let at = to, left = dur;
+    const firstBar = barOf(to);
+    for (b = firstBar; left > 0; b++) {
+      const list = get(b);
+      joinRests(list);
+      const offset = at - starts[b], len = Math.min(left, all[b].units - offset);
+      let x = 0, i = 0;
+      while (i < list.length && x + list[i].dur <= offset) x += list[i++].dur;
+      const rest = list[i];
+      if (!rest || !rest.rest || x + rest.dur < offset + len) throw new Error("Orada başka nota var; nota yalnız boş yere taşınır");
+      const parts = [];
+      if (offset > x) parts.push({ rest: true, dur: offset - x, tieOut: false, contIn: false });
+      parts.push(Object.assign({ rest: false, dur: len, tieOut: left > len, contIn: b !== firstBar, midi }, spell(midi, all[b].key)));
+      if (x + rest.dur > offset + len) parts.push({ rest: true, dur: x + rest.dur - offset - len, tieOut: false, contIn: false });
+      list.splice(i, 1, ...parts);
+      at += len; left -= len;
+    }
+
+    for (const list of bars.values()) joinRests(list);
+    const next = model.bars.map((bar, n) => {
+      if (!bars.has(n)) return bar;
+      const list = bars.get(n);
+      if (list.reduce((s, x) => s + x.dur, 0) !== all[n].units) throw new Error("iç hata: ölçü süresi bozuldu");
+      return { ...bar, [voice]: writeBar(list, all[n].key, all[n].units) };
+    });
+    let note = 0;
+    for (let x = starts[firstBar], list = bars.get(firstBar); x < to; x += list[note++].dur);
+    return { model: { ...model, bars: next }, sel: { bar: firstBar, note } };
+  }
+
   // MIDI pitch as a name for the status line: "F#4", "Bb3".
   function pitchName(note) {
     return note.rest ? "sus" : note.letter + ({ 2: "𝄪", 1: "♯", 0: "", "-1": "♭", "-2": "𝄫" })[note.alter] + note.octave;
   }
 
   return { parse, serialize, sections, sectionOf, setSection, swapVoices, tieSafeRange,
-    voiceNotes, editNote, writeBar, pitchName, unitDenominator: (m) => Number((headerField(m, "L").split("/")[1]) || 8) };
+    voiceNotes, editNote, moveNote, writeBar, pitchName, unitDenominator: (m) => Number((headerField(m, "L").split("/")[1]) || 8) };
 })();
 
 if (typeof module !== "undefined") module.exports = ScoreModel;

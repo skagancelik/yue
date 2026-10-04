@@ -469,7 +469,7 @@ body.has-player { padding-bottom: 88px; }
 .source-score.error { color: var(--warn); }
 
 /* ---- note edges, track bars, score versions ---- */
-.daw-note, .daw-ins { overflow: visible; }
+.daw-note, .daw-ins { overflow: visible; cursor: grab; }
 .rz { position: absolute; top: -2px; bottom: -2px; right: -3px; width: 7px; cursor: ew-resize; z-index: 2; }
 .daw-note:hover .rz, .daw-ins:hover .rz, .resizing .rz { background: rgba(255, 255, 255, .55); border-radius: 2px; }
 .daw-note.resizing, .daw-ins.resizing { outline: 1px dashed #fff; z-index: 3; }
