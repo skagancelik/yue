@@ -1158,6 +1158,7 @@ function paintTrack(event, k) {
 
 $("daw-scroll").addEventListener("pointerdown", (event) => {
   const target = event.target;
+  if (target.closest(".daw-ask")) return;   // its buttons answer on click
   if (target.closest(".daw-track-add")) { addTrack(); return; }
   const trackLabel = target.closest(".daw-track-label");
   if (trackLabel) { openTrackEditor(Number(trackLabel.closest(".daw-track").dataset.track), trackLabel); return; }
@@ -1235,6 +1236,7 @@ $("daw-scroll").addEventListener("pointerdown", (event) => {
 });
 
 $("daw-scroll").addEventListener("dblclick", (event) => {
+  if (event.target.closest(".daw-ask")) return;
   if (event.target.closest(".daw-roll") && !event.target.closest(".daw-note, .daw-ins, .daw-label")) { placeDawNote(event); return; }
   const trackBlock = event.target.closest(".daw-track-block");
   if (trackBlock) {
