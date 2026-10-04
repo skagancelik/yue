@@ -538,13 +538,157 @@ const ScoreModel = (() => {
     return { model: { ...model, bars: next }, sel: { bar: firstBar, note } };
   }
 
+  // ---- a voice on one time axis
+  // [{ u0, dur, midi }]: the voice's notes from the start of the song in units (a held note whole),
+  // with where each bar starts. Throws when a bar cannot be read.
+  function voiceLine(model, voice) {
+    const all = voiceNotes(model, voice);
+    const bad = all.find((bar) => bar.error);
+    if (bad) throw new Error(`Bu ölçü düzenlenemiyor: ${bad.error}`);
+    const starts = [], notes = [];
+    let u = 0;
+    for (const bar of all) {
+      starts.push(u);
+      for (const n of bar.notes) {
+        if (!n.rest) {
+          if (n.contIn && notes.length) notes[notes.length - 1].dur += n.dur;
+          else notes.push({ u0: u, dur: n.dur, midi: n.midi });
+        }
+        u += n.dur;
+      }
+    }
+    return { notes, starts, total: u, all };
+  }
+
+  // The voice written from notes on one axis (they must not overlap). Bars needed past the end are
+  // added as full rests in both voices; only bars whose notes changed are written again.
+  function writeLine(model, voice, notes) {
+    const { starts, total, all } = voiceLine(model, voice);
+    notes = notes.map((n) => ({ ...n })).sort((a, b) => a.u0 - b.u0);
+    notes.forEach((n, i) => {
+      if (n.u0 < 0) throw new Error("Nota şarkının başından önceye gidemez");
+      if (n.midi < 36 || n.midi > 96) throw new Error("Bu perde nota aralığının dışında");
+      if (i && notes[i - 1].u0 + notes[i - 1].dur > n.u0) throw new Error("Notalar üst üste biniyor");
+    });
+    const end = notes.length ? notes[notes.length - 1].u0 + notes[notes.length - 1].dur : 0;
+    const bars = model.bars.slice();
+    const last = all[all.length - 1];
+    let length = total;
+    while (length < end) {
+      bars.push({ vocal: "Z", ins: "Z", labels: [], meter: null, key: null });
+      all.push({ notes: [{ rest: true, dur: last.units, tieOut: false, contIn: false }], key: last.key, units: last.units });
+      starts.push(length);
+      length += last.units;
+    }
+    let i = 0;
+    const out = bars.map((bar, b) => {
+      const s = starts[b], e = s + all[b].units;
+      const list = [];
+      let at = s;
+      const rest = (to) => { if (to > at) list.push({ rest: true, dur: to - at, tieOut: false, contIn: false }); at = Math.max(at, to); };
+      while (i > 0 && notes[i - 1].u0 + notes[i - 1].dur > s) i--;
+      for (; i < notes.length && notes[i].u0 < e; i++) {
+        const n = notes[i], a = Math.max(n.u0, s), z = Math.min(n.u0 + n.dur, e);
+        if (z <= s) continue;
+        rest(a);
+        list.push(Object.assign({ rest: false, dur: z - a, midi: n.midi, contIn: n.u0 < s, tieOut: n.u0 + n.dur > e }, spell(n.midi, all[b].key)));
+        at = z;
+      }
+      rest(e);
+      const old = all[b].notes;
+      const same = old.length === list.length && old.every((o, k) => o.rest === list[k].rest && o.dur === list[k].dur
+        && (o.rest || (o.midi === list[k].midi && !!o.tieOut === list[k].tieOut && !!o.contIn === list[k].contIn)));
+      return same ? bar : { ...bar, [voice]: writeBar(list, all[b].key, all[b].units) };
+    });
+    return { ...model, bars: out };
+  }
+
+  // Where the note starting at unit u0 of `voice` is: { bar, note } (for the editor's selection).
+  function noteAt(model, voice, u0) {
+    const { all, starts } = voiceLine(model, voice);
+    for (let b = 0; b < all.length; b++) {
+      let x = starts[b];
+      for (let k = 0; k < all[b].notes.length; k++) {
+        const n = all[b].notes[k];
+        if (x === u0 && !n.rest && !n.contIn) return { bar: b, note: k };
+        x += n.dur;
+      }
+    }
+    return null;
+  }
+
+  // The note at u0 and everything after it in `voice` moved by `by` units (both ways); before it
+  // there must be room. Returns { model, sel }.
+  function shiftFrom(model, voice, u0, by) {
+    const { notes } = voiceLine(model, voice);
+    const at = notes.findIndex((n) => n.u0 === u0);
+    if (at < 0) throw new Error("Nota bulunamadı");
+    const before = at > 0 ? notes[at - 1].u0 + notes[at - 1].dur : 0;
+    if (u0 + by < before) throw new Error(at > 0 ? "Önceki notaya dayandı; daha fazla geri öteleyemez" : "Şarkının başına dayandı");
+    const next = notes.map((n, i) => (i >= at ? { ...n, u0: n.u0 + by } : n));
+    const out = writeLine(model, voice, next);
+    return { model: out, sel: noteAt(out, voice, u0 + by) };
+  }
+
+  // The note at u0 of `voice` made to sound from `start` to `end` (one edge moved).
+  //   "ripple": what comes after moves with its end (a longer note pushes it on, a shorter one
+  //     pulls it back); a start moved onto the note before pushes the note and the rest on instead.
+  //   "plain": nothing else moves; the new place must be free.
+  //   "overlap": nothing else moves; the note goes to the other voice, sounding together with the
+  //     notes it now covers (that voice must be free there).
+  // Returns { model, sel: { voice, bar, note } }.
+  function resizeNote(model, voice, u0, start, end, mode) {
+    const { notes } = voiceLine(model, voice);
+    const at = notes.findIndex((n) => n.u0 === u0);
+    if (at < 0) throw new Error("Nota bulunamadı");
+    const note = notes[at], u1 = note.u0 + note.dur;
+    if (end - start < 1) throw new Error("Daha fazla kısaltılamaz");
+    const next = notes.map((n) => ({ ...n }));
+    let target = voice, placedAt = start;
+    if (mode === "ripple") {
+      const before = at > 0 ? notes[at - 1].u0 + notes[at - 1].dur : 0;
+      const push = Math.max(0, before - start) + (end - u1);
+      placedAt = start + Math.max(0, before - start);
+      next[at] = { ...note, u0: placedAt, dur: end - start };
+      for (let i = at + 1; i < next.length; i++) next[i].u0 += push;
+    } else if (mode === "plain") {
+      next[at] = { ...note, u0: start, dur: end - start };
+    } else if (mode === "overlap") {
+      const other = voice === "vocal" ? "ins" : "vocal";
+      const others = voiceLine(model, other).notes;
+      if (others.some((n) => n.u0 < end && start < n.u0 + n.dur)) {
+        throw new Error(`İki ses de dolu: ${other === "ins" ? "Enstrüman" : "Vokal"} sesinde burada nota var; üçüncü bir nota üst üste binemez`);
+      }
+      next.splice(at, 1);
+      model = writeLine(model, other, [...others, { u0: start, dur: end - start, midi: note.midi }]);
+      target = other;
+    } else {
+      throw new Error(`bilinmeyen kip ${mode}`);
+    }
+    const out = writeLine(model, voice, next);
+    const sel = noteAt(out, target, placedAt);
+    return { model: out, sel: sel && { voice: target, ...sel } };
+  }
+
+  // A new note `dur` long at `midi` put in front of the note at u0, which moves on with everything
+  // after it. Returns { model, sel }.
+  function insertBefore(model, voice, u0, dur, midi) {
+    const { notes } = voiceLine(model, voice);
+    const at = notes.findIndex((n) => n.u0 === u0);
+    if (at < 0) throw new Error("Nota bulunamadı");
+    const next = notes.map((n, i) => (i >= at ? { ...n, u0: n.u0 + dur } : n));
+    next.splice(at, 0, { u0, dur, midi });
+    const out = writeLine(model, voice, next);
+    return { model: out, sel: noteAt(out, voice, u0) };
+  }
+
   // MIDI pitch as a name for the status line: "F#4", "Bb3".
   function pitchName(note) {
     return note.rest ? "sus" : note.letter + ({ 2: "𝄪", 1: "♯", 0: "", "-1": "♭", "-2": "𝄫" })[note.alter] + note.octave;
   }
 
   return { parse, serialize, sections, sectionOf, setSection, swapVoices, tieSafeRange,
-    voiceNotes, editNote, moveNote, writeBar, pitchName, unitDenominator: (m) => Number((headerField(m, "L").split("/")[1]) || 8) };
+    voiceNotes, editNote, moveNote, voiceLine, writeLine, shiftFrom, resizeNote, insertBefore, writeBar, pitchName, unitDenominator: (m) => Number((headerField(m, "L").split("/")[1]) || 8) };
 })();
 
 if (typeof module !== "undefined") module.exports = ScoreModel;

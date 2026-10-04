@@ -471,6 +471,13 @@ body.has-player { padding-bottom: 88px; }
 /* ---- note edges, track bars, score versions ---- */
 .daw-note, .daw-ins { overflow: visible; cursor: grab; }
 .rz { position: absolute; top: -2px; bottom: -2px; right: -3px; width: 7px; cursor: ew-resize; z-index: 2; }
+.rz.rz-left { right: auto; left: -3px; }
+.daw-tool-group { display: inline-flex; gap: 2px; padding: 0 4px; border-left: 1px solid var(--line, #333); border-right: 1px solid var(--line, #333); }
+.daw-ask { position: absolute; top: 6px; z-index: 20; display: flex; flex-direction: column; gap: 6px; padding: 10px 30px 10px 12px;
+  background: #1d1d28; border: 1px solid #4a4a5e; border-radius: 8px; box-shadow: 0 6px 24px rgba(0, 0, 0, .5); white-space: nowrap; }
+.daw-ask-text { font-size: 13px; color: var(--text); }
+.daw-ask-row { display: flex; gap: 6px; }
+.daw-ask-x { position: absolute; top: 4px; right: 4px; }
 .daw-note:hover .rz, .daw-ins:hover .rz, .resizing .rz { background: rgba(255, 255, 255, .55); border-radius: 2px; }
 .daw-note.resizing, .daw-ins.resizing { outline: 1px dashed #fff; z-index: 3; }
 .daw-roll { cursor: cell; }

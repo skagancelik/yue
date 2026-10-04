@@ -203,6 +203,43 @@ test("moveNote: a note slides into silence, over a barline tied, never onto anot
   assert.strictEqual(back.model.bars[3].vocal, "z8e8d8f8");
 });
 
+test("shiftFrom, resizeNote and insertBefore keep every note and move what follows", () => {
+  const model = ScoreModel.parse(ABC);
+  // Intro: c8d8e8z8|g16e16| at units 0, 8, 16, 32, 48.
+  const later = ScoreModel.shiftFrom(model, "vocal", 8, 4);
+  assert.strictEqual(later.model.bars[0].vocal, "c8z4d8e8z4");
+  assert.strictEqual(later.model.bars[1].vocal, "z4g16e12-", "everything after moves too");
+  assert.strictEqual(later.model.bars[2].vocal, "e4c8c8d8e4-");
+  assert.deepStrictEqual(later.sel, { bar: 0, note: 2 });
+  assert.throws(() => ScoreModel.shiftFrom(model, "vocal", 8, -4), /Önceki notaya/);
+  // Right edge longer, rippling: d8 becomes d12, e and the rest move 4 on; nothing is cut.
+  const longer = ScoreModel.resizeNote(model, "vocal", 8, 8, 20, "ripple");
+  assert.strictEqual(longer.model.bars[0].vocal, "c8d12e8z4");
+  assert.deepStrictEqual(longer.sel, { voice: "vocal", bar: 0, note: 1 });
+  // Shorter, rippling back.
+  const shorter = ScoreModel.resizeNote(model, "vocal", 8, 8, 12, "ripple");
+  assert.strictEqual(shorter.model.bars[0].vocal, "c8d4e8z8g4-");
+  // Left edge onto the note before, rippling: the note grows and it and the rest move on.
+  const left = ScoreModel.resizeNote(model, "vocal", 8, 4, 16, "ripple");
+  assert.strictEqual(left.model.bars[0].vocal, "c8d12e8z4");
+  // Overlap: the note goes to Ins, sounding together with e.
+  const both = ScoreModel.resizeNote(model, "vocal", 8, 8, 24, "overlap");
+  assert.strictEqual(both.model.bars[0].vocal, "c8z8e8z8");
+  assert.strictEqual(both.model.bars[0].ins, "z8d16z8");
+  assert.deepStrictEqual(both.sel, { voice: "ins", bar: 0, note: 1 });
+  assert.throws(() => ScoreModel.resizeNote(model, "vocal", 8, 8, 24, "plain"), /üst üste/);
+  // Pushed past the end: a bar is added.
+  const pushed = ScoreModel.shiftFrom(model, "vocal", 0, 32 * 15);
+  assert.strictEqual(pushed.model.bars.length, 25);
+  assert.strictEqual(pushed.model.bars[24].vocal, "g24z8");
+  // Bars before the change keep their text.
+  assert.strictEqual(ScoreModel.shiftFrom(model, "vocal", 48, 4).model.bars[0].vocal, "c8d8e8z8");
+  // A new note in front of d, which moves on.
+  const added = ScoreModel.insertBefore(model, "vocal", 8, 4, 79);
+  assert.strictEqual(added.model.bars[0].vocal, "c8g4d8e8z4");
+  assert.deepStrictEqual(added.sel, { bar: 0, note: 1 });
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
   try { fn(); console.log("ok  ", name); } catch (error) { failed++; console.log("FAIL", name, "\n   ", error.message); }
