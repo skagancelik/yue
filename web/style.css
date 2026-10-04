@@ -370,7 +370,7 @@ body.has-player { padding-bottom: 88px; }
 .daw-hold { top: 15px; height: 2px; background: #6a6a80; }
 .daw-playhead { position: absolute; top: 0; bottom: 0; left: 0; width: 2px; margin-left: -1px; background: #ffd34d; z-index: 4; pointer-events: none; }
 .daw-tray { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 16px; border-top: 1px solid var(--line); background: var(--panel); max-height: 90px; overflow: auto; }
-.daw-loose { border: 1px solid var(--warn); background: transparent; color: var(--warn); border-radius: 4px; padding: 1px 6px; font-size: 12px; cursor: pointer; }
+.daw-loose { border: 1px solid var(--warn); background: transparent; color: var(--warn); border-radius: 4px; padding: 1px 6px; font-size: 12px; cursor: grab; touch-action: none; }
 .daw-loose.on { background: var(--warn); color: #000; }
 .daw-foot { padding: 8px 16px; border-top: 1px solid var(--line); background: var(--panel); color: var(--muted); min-height: 20px; }
 .daw-msg { color: var(--warn); }
