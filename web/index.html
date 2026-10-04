@@ -293,8 +293,8 @@
       <strong id="daw-title" class="daw-title"></strong>
       <button type="button" id="daw-play" class="btn primary small daw-play" title="Çal / durdur (boşluk)">▶</button>
       <span id="daw-time" class="daw-time small"></span>
-      <button type="button" id="daw-zoom-out" class="btn ghost small" title="Uzaklaş">−</button>
-      <button type="button" id="daw-zoom-in" class="btn ghost small" title="Yakınlaş">+</button>
+      <button type="button" id="daw-zoom-out" class="btn ghost small" title="Yatay uzaklaş (⌘/Ctrl + tekerlek ya da iki parmakla kıstır da olur)">−</button>
+      <button type="button" id="daw-zoom-in" class="btn ghost small" title="Yatay yakınlaş: zaman ekseni genişler (⌘/Ctrl + tekerlek ya da iki parmakla aç da olur)">+</button>
       <button type="button" id="daw-after" class="btn ghost small" title="Seçili ilk heceden sonraki bütün heceleri de seç">→ Sonrakileri de seç</button>
       <button type="button" id="daw-undo" class="btn ghost small" title="Geri al (⌘/Ctrl+Z)">↶ Geri al</button>
       <button type="button" id="daw-auto" class="btn ghost small" title="Heceler melodinin cümlelerine göre yeniden yerleşsin">✨ Otomatik yerleştir</button>
@@ -323,9 +323,14 @@
         <button type="button" class="btn ghost small" data-note="down" title="Yarım ses pes (↓)">♭ ↓</button>
         <button type="button" class="btn ghost small" data-note="octave-up" title="Bir oktav tiz (Shift+↑)">Oktav ↑</button>
         <button type="button" class="btn ghost small" data-note="octave-down" title="Bir oktav pes (Shift+↓)">Oktav ↓</button>
-        <button type="button" class="btn ghost small" data-note="longer" title="Uzat; süreyi sonraki nota ya da sustan alır (+)">Uzat +</button>
-        <button type="button" class="btn ghost small" data-note="shorter" title="Kısalt; artan süre susa döner (−)">Kısalt −</button>
-        <select id="daw-step" class="small-select" aria-label="Uzatma/kısaltma adımı" title="Uzat/Kısalt adımı"></select>
+        <button type="button" class="btn ghost small" data-note="longer" title="Uzat (+). Sözlü yerde devamı ileri kayar; sözsüz yerde sorar">Uzat +</button>
+        <button type="button" class="btn ghost small" data-note="shorter" title="Kısalt (−). Sözlü yerde devamı geri çekilir; sözsüz yerde sorar">Kısalt −</button>
+        <select id="daw-step" class="small-select" aria-label="Adım" title="Uzat/Kısalt/Ötele/Ekle adımı"></select>
+        <span class="daw-tool-group" title="Bu nota ve şarkının devamındaki notalar (vokalde sözleriyle) birlikte kayar">
+          <button type="button" class="btn ghost small" data-note="shift-back" title="Bu notayı ve devamını bir adım geri ötele (Alt+←)">⇤ Ötele</button>
+          <button type="button" class="btn ghost small" data-note="shift-on" title="Bu notayı ve devamını bir adım ileri ötele (Alt+→); istediğin kadar bas">Ötele ⇥</button>
+        </span>
+        <button type="button" class="btn ghost small" data-note="insert" title="Önüne bir adım uzunluğunda yeni nota ekle; bu nota ve devamı ötelenir (I)">＋ Önüne nota</button>
         <button type="button" class="btn ghost small" data-note="rest" title="Notayı susa çevir (Delete)">Sus yap</button>
         <button type="button" class="btn ghost small" data-note="note" title="Susu notaya çevir (N)">Notaya çevir</button>
         <button type="button" class="btn ghost small" data-note="split" title="İki eşit notaya böl">Böl</button>
