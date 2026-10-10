@@ -499,3 +499,18 @@ body.has-player { padding-bottom: 88px; }
 .daw-menu .menu-item:disabled { opacity: .4; cursor: default; background: transparent; }
 .daw-menu-key { color: var(--muted); font-size: 12px; }
 .daw-scroll:focus { outline: none; }
+
+/* Eser tasarımları of a source: named score + lyrics + layout + tracks, each sent to YuE2 on its own. */
+.designs { display: grid; gap: 6px; margin: 10px 0 4px; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); }
+.designs-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.designs-head .btn { margin-left: auto; }
+.designs-title { font-weight: 600; }
+.design { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 8px; border-radius: 8px; border: 1px solid transparent; }
+.design.selected { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.design-main { display: grid; gap: 2px; min-width: 0; flex: 1 1 100%; }
+.design-name { font-weight: 600; overflow-wrap: anywhere; }
+.design-actions { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.design-actions a.icon-btn { text-decoration: none; }
+.design-form { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.design-form input { flex: 1 1 160px; width: auto; }
+.design-form select { flex: 1 1 220px; width: auto; }

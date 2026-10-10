@@ -6,6 +6,7 @@ janitor (every 5 min) is the safety net for both directions.
 """
 import base64
 from decimal import Decimal
+import hashlib
 import hmac
 import json
 import os
@@ -34,6 +35,8 @@ OWNER = "me"
 FOLDERS = "folders"
 SOURCES = "sources"
 STYLES = "styles"
+DESIGNS = "designs"        # a source's named scores to make covers from (score, lyrics, layout, tracks)
+MAX_DESIGNS = 40
 TASKS = "tasks"            # GPU queue items that are not covers (stem separation)
 STEM_KEYS = ("instrumental_key", "instrumental_mp3_key", "vocals_key")
 WORKER_ID = "__worker__"
@@ -234,7 +237,7 @@ def public_job(job):
         "id", "group", "title", "style", "lyrics", "seed", "status", "stage", "message", "error",
         "created_at", "started_at", "finished_at", "duration", "source_name", "tokens", "variant",
         "upload_key", "folder_id", "source_id", "stems_status", "stems_message", "stems_error", "lyrics_start", "lyrics_layout",
-        "style_base")}
+        "style_base", "design_id", "design_name")}
     # Where the score YuE2 got came from: "prepared" (laid out in the timeline and converted by the
     # browser), "edited" (the source's corrected score), "transcript" (the source's saved transcription),
     # or none (the recording was transcribed in the job). Older jobs with a score only had edited ones.
@@ -318,8 +321,14 @@ def create_jobs(body):
         raise HttpError(400, "Önce bir şarkı seç; her düzenleme bir şarkıya ait olmalı")
     folder_id = validate_text(body, "folder_id", 32)
     source_id = validate_text(body, "source_id", 32, required=False)
+    design_id = validate_text(body, "design_id", 32, required=False)
     get_folder(folder_id)
     score_key = score_text = score_from = None
+    design = None
+    if design_id:
+        design = get_item(design_id, DESIGNS, "Eser tasarımı bulunamadı")
+        if design.get("source_id") != source_id:
+            raise HttpError(400, "Eser tasarımı bu besteye ait değil")
     if body.get("abc") is not None:
         # The score the browser prepared from the timeline (lyrics laid on it, unsung bars given to the
         # instrument, sections named after the lyrics). It goes to YuE2 as it is.
@@ -330,10 +339,10 @@ def create_jobs(body):
     if source_id:
         source = get_item(source_id, SOURCES, "Beste bulunamadı")
         upload_key, body["source_name"] = source["key"], source["name"]
-        if score_text is None:
-            # A corrected score, else the saved transcription: either skips melody extraction.
-            score_key = source.get("score_key") or source.get("transcript_key")
-            score_from = "edited" if source.get("score_key") else "transcript" if score_key else None
+        if score_text is None and design:
+            score_key, score_from = design["score_key"], "design"
+        # Without a design (or a prepared score) the cover is made from the recording: YuE2 extracts
+        # the melody itself.
     else:
         upload_key = validate_text(body, "upload_key", 200)
     if not re.fullmatch(r"(uploads|sources)/[0-9a-f]{32}\.[a-z0-9]+", upload_key):
@@ -374,6 +383,8 @@ def create_jobs(body):
         job["folder_id"] = folder_id
         if source_id:
             job["source_id"] = source_id
+        if design:
+            job["design_id"], job["design_name"] = design["id"], design["name"]
         if score_key or score_text is not None:
             # A copy, so saving or resetting the source's score later does not change a queued job.
             job["score_key"], job["score_from"] = f"outputs/{job['id']}/input.abc", score_from
@@ -540,6 +551,7 @@ def delete_folder(folder_id):
         if source.get("folder_id") == folder_id:
             for key in source_keys(source):
                 s3.delete_object(Bucket=BUCKET, Key=key)
+            delete_designs(source["id"])
             table.delete_item(Key={"id": source["id"]})
     table.delete_item(Key={"id": folder_id})
     return {"deleted": folder_id}
@@ -757,14 +769,168 @@ def delete_source(source_id):
         raise HttpError(409, "Bu besteyi kullanan bir düzenleme sürüyor; bitmesini bekleyin veya iptal edin")
     for key in source_keys(source):
         s3.delete_object(Bucket=BUCKET, Key=key)
+    delete_designs(source_id)
     table.delete_item(Key={"id": source_id})
     return {"deleted": source_id}
 
 
 def library():
+    sources = all_items(SOURCES)
+    designs = all_items(DESIGNS)
+    designs += seed_designs(sources, designs)
     return {"folders": [public_folder(f) for f in all_items(FOLDERS)],
-            "sources": [public_source(s) for s in all_items(SOURCES)],
+            "sources": [public_source(s) for s in sources],
+            "designs": [public_design(d) for d in designs],
             "jobs": [public_job(j) for j in all_items(OWNER)]}
+
+
+# ---------------------------------------------------------------- eser tasarımları (designs)
+# A source (the recording) keeps its melody extractions; what a cover is made from is one of its
+# designs: a score of its own with the lyrics laid on it and the instrument tracks, under a name.
+# A source can have several (a short version, another chorus …); each is edited on its own.
+
+def public_design(design):
+    out = {k: design.get(k) for k in ("id", "source_id", "folder_id", "name", "origin", "created_at", "updated_at")}
+    out["lyrics"] = design.get("lyrics") or ""
+    out["lyrics_layout"] = design.get("lyrics_layout")
+    out["tracks"] = design.get("tracks") or []
+    out["score_url"] = presign_get(design["score_key"])
+    out["score_download"] = presign_get(design["score_key"], safe_filename(design.get("name"), "abc"))
+    return out
+
+
+def design_key(source_id, design_id):
+    return f"sources/{source_id}.designs/{design_id}.abc"
+
+
+def put_design(source, name, origin, abc=None, copy_from=None, lyrics="", layout=None, tracks=None, design_id=None, only_new=False):
+    """A new design of `source` with the score `abc` (or the S3 object `copy_from`)."""
+    design_id = design_id or uuid.uuid4().hex
+    key = design_key(source["id"], design_id)
+    if abc is not None:
+        s3.put_object(Bucket=BUCKET, Key=key, Body=abc.encode("utf-8"), ContentType="text/plain; charset=utf-8")
+    else:
+        s3.copy_object(Bucket=BUCKET, Key=key, CopySource={"Bucket": BUCKET, "Key": copy_from},
+                       ContentType="text/plain; charset=utf-8", MetadataDirective="REPLACE")
+    t = now()
+    design = {"id": design_id, "owner": DESIGNS, "source_id": source["id"], "folder_id": source.get("folder_id"),
+              "name": name, "origin": origin, "score_key": key, "lyrics": lyrics or "", "created_at": t * 1000, "updated_at": t}
+    if layout:
+        design["lyrics_layout"] = layout
+    if tracks:
+        design["tracks"] = tracks
+    try:
+        table.put_item(Item=design, **({"ConditionExpression": "attribute_not_exists(id)"} if only_new else {}))
+    except ClientError as error:
+        if error.response["Error"]["Code"] != "ConditionalCheckFailedException":
+            raise
+        return None
+    return design
+
+
+def seed_designs(sources, designs):
+    """A source with a score and no design yet (from before designs, or just extracted) gets its
+    first one from what it has: the corrected score, else the active extraction, with the source's
+    lyrics, layout and tracks. Only once per source, so deleting every design is respected."""
+    made = []
+    have = {d.get("source_id") for d in designs}
+    for source in sources:
+        score = source.get("score_key") or source.get("transcript_key")
+        if not score or source["id"] in have or source.get("designs_seeded"):
+            continue
+        design_id = hashlib.md5(f"{source['id']}:first-design".encode()).hexdigest()
+        origin = "bestenin düzeltilmiş notası" if source.get("score_key") else "melodi çıkarmasından"
+        design = put_design(source, "Eser tasarımı 1", origin, copy_from=score, lyrics=source.get("lyrics") or "",
+                            layout=source.get("lyrics_layout"), tracks=source.get("tracks"), design_id=design_id, only_new=True)
+        try:
+            table.update_item(Key={"id": source["id"]}, ConditionExpression="attribute_exists(id)",
+                              UpdateExpression="SET designs_seeded = :y", ExpressionAttributeValues={":y": True})
+        except ClientError as error:
+            if error.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                raise
+        source["designs_seeded"] = True
+        if design:
+            made.append(design)
+    return made
+
+
+def design_fields(body):
+    fields = {}
+    if "name" in body:
+        fields["name"] = validate_text(body, "name", 80)
+    if "lyrics" in body:
+        fields["lyrics"] = validate_text(body, "lyrics", 16000, required=False) or ""
+    if "lyrics_layout" in body:
+        fields["lyrics_layout"] = validate_lyrics_layout(body["lyrics_layout"])
+    if "tracks" in body:
+        fields["tracks"] = validate_tracks(body["tracks"]) or None
+    return fields
+
+
+def create_design(source_id, body):
+    """A new design of a source: from one of its melody extractions (`transcript`: version id), as a
+    copy of another design (`copy`: design id), or from a score the browser sends (`abc`)."""
+    source = get_item(source_id, SOURCES, "Beste bulunamadı")
+    if sum(1 for d in all_items(DESIGNS) if d.get("source_id") == source_id) >= MAX_DESIGNS:
+        raise HttpError(400, f"Bir bestenin en fazla {MAX_DESIGNS} eser tasarımı olabilir")
+    fields = design_fields(body)
+    name = fields.get("name") or "Yeni eser tasarımı"
+    if body.get("copy"):
+        other = get_item(validate_text(body, "copy", 32), DESIGNS, "Kopyalanacak eser tasarımı bulunamadı")
+        if other.get("source_id") != source_id:
+            raise HttpError(400, "Eser tasarımı bu besteye ait değil")
+        design = put_design(source, name, f"«{other['name']}» kopyası", copy_from=other["score_key"],
+                            lyrics=other.get("lyrics") or "", layout=other.get("lyrics_layout"), tracks=other.get("tracks"))
+    elif body.get("abc") is not None:
+        check_score(body["abc"])
+        design = put_design(source, name, validate_text(body, "origin", 200, required=False) or "zaman çizgisinden",
+                            abc=body["abc"], lyrics=fields.get("lyrics", ""), layout=fields.get("lyrics_layout"), tracks=fields.get("tracks"))
+    else:
+        versions = transcript_versions(source)
+        chosen = next((v for v in versions if v["id"] == body.get("transcript")), None) if body.get("transcript") else \
+            next((v for v in versions if v["key"] == source.get("transcript_key")), None)
+        if not chosen:
+            raise HttpError(400, "Önce bestenin melodisi notaya çıkarılmalı")
+        k = versions.index(chosen) + 1
+        design = put_design(source, name, f"melodi çıkarması v{k}", copy_from=chosen["key"],
+                            lyrics=fields.get("lyrics", source.get("lyrics") or ""), tracks=fields.get("tracks"))
+    return public_design(design)
+
+
+def update_design(design_id, body):
+    design = get_item(design_id, DESIGNS, "Eser tasarımı bulunamadı")
+    fields = design_fields(body)
+    if body.get("abc") is not None:
+        check_score(body["abc"])
+        s3.put_object(Bucket=BUCKET, Key=design["score_key"], Body=body["abc"].encode("utf-8"),
+                      ContentType="text/plain; charset=utf-8")
+    elif not fields:
+        raise HttpError(400, "Değişiklik yok")
+    fields["updated_at"] = now()
+    sets = {k: v for k, v in fields.items() if v is not None}
+    removes = [k for k, v in fields.items() if v is None]
+    expression = "SET " + ", ".join(f"#{k} = :{k}" for k in sets)
+    if removes:
+        expression += " REMOVE " + ", ".join(f"#{k}" for k in removes)
+    table.update_item(Key={"id": design_id}, UpdateExpression=expression,
+                      ExpressionAttributeNames={f"#{k}": k for k in fields},
+                      ExpressionAttributeValues={f":{k}": v for k, v in sets.items()})
+    return public_design(get_item(design_id, DESIGNS, "Eser tasarımı bulunamadı"))
+
+
+def delete_design(design_id):
+    """Covers made from it keep their own copy of the score."""
+    design = get_item(design_id, DESIGNS, "Eser tasarımı bulunamadı")
+    s3.delete_object(Bucket=BUCKET, Key=design["score_key"])
+    table.delete_item(Key={"id": design_id})
+    return {"deleted": design_id}
+
+
+def delete_designs(source_id):
+    for design in all_items(DESIGNS):
+        if design.get("source_id") == source_id:
+            s3.delete_object(Bucket=BUCKET, Key=design["score_key"])
+            table.delete_item(Key={"id": design["id"]})
 
 
 # ---------------------------------------------------------------- style sets
@@ -816,6 +982,9 @@ ROUTES = [
     ("DELETE", r"/api/sources/([0-9a-f]{32})", lambda e, m: delete_source(m.group(1))),
     ("PUT", r"/api/sources/([0-9a-f]{32})/score", lambda e, m: save_source_score(m.group(1), parse_body(e))),
     ("DELETE", r"/api/sources/([0-9a-f]{32})/score", lambda e, m: reset_source_score(m.group(1))),
+    ("POST", r"/api/sources/([0-9a-f]{32})/designs", lambda e, m: create_design(m.group(1), parse_body(e))),
+    ("PATCH", r"/api/designs/([0-9a-f]{32})", lambda e, m: update_design(m.group(1), parse_body(e))),
+    ("DELETE", r"/api/designs/([0-9a-f]{32})", lambda e, m: delete_design(m.group(1))),
     ("POST", r"/api/sources/([0-9a-f]{32})/transcribe", lambda e, m: request_transcription(m.group(1), parse_body(e))),
     ("GET", r"/api/styles", lambda e, m: {"styles": [public_style(i) for i in all_items(STYLES)]}),
     ("POST", r"/api/styles", lambda e, m: create_style(parse_body(e))),
