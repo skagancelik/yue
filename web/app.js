@@ -6,9 +6,10 @@ const STATUS_TEXT = { queued: "Sırada", running: "Düzenleniyor", succeeded: "H
 const GPU_HOURLY_USD = { "g6.2xlarge": 1.2, "g5.2xlarge": 1.46, "g6e.xlarge": 2.24, "g6.xlarge": 0.98, "g5.xlarge": 1.23 };
 
 let passcode = null;
-let source = null;          // selected source for the next job: {id?, key?, name, url}
+let source = null;          // selected source for the next job: {id?, key?, name, url, design_id?}
 let folders = [];
 let sources = [];
+let designs = [];            // eser tasarımları: a source's named scores (score, lyrics, layout, tracks)
 let jobs = [];
 let styles = [];
 let gpu = null;
@@ -152,6 +153,7 @@ $("folder-delete").addEventListener("click", async () => {
     await api(`/folders/${folder.id}`, { method: "DELETE" });
     folders = folders.filter((f) => f.id !== folder.id);
     sources = sources.filter((s) => s.folder_id !== folder.id);
+    designs = designs.filter((d) => d.folder_id !== folder.id);
     setView({ type: "folder", id: folders[0] ? folders[0].id : null });
   } catch (error) { report(error); }
 });
@@ -187,22 +189,42 @@ function showSource(name, url, uploaded) {
   $("upload-bar").style.width = uploaded ? "100%" : "0";
 }
 
-// The lyrics the timeline editor laid out on the source's notes, when it did: they are what a
-// cover is made with (the editor is the reference; the form follows it).
-function editorLyrics(item) {
-  const at = item && item.lyrics_layout && item.lyrics_layout.at;
-  const lyrics = item && (item.lyrics || "").trim();
+// The lyrics the timeline editor laid out on a design's notes, when it did: they are what a cover
+// is made with (the editor is the reference; the form follows it).
+function editorLyrics(design) {
+  const at = design && design.lyrics_layout && design.lyrics_layout.at;
+  const lyrics = design && (design.lyrics || "").trim();
   return at && lyrics && at.length === LyricsLayout.allSyllables(lyrics).length ? lyrics : null;
 }
 
+const sourceDesigns = (item) => designs.filter((d) => d.source_id === item.id).sort((a, b) => a.created_at - b.created_at);
+const selectedDesign = () => source && source.design_id && designs.find((d) => d.id === source.design_id);
+
+// The recording itself: the cover is made from the audio (YuE2 extracts the melody).
 function selectSource(item) {
   source = { id: item.id, name: item.name, url: item.url, folder_id: item.folder_id };
-  showSource(item.name, item.url, true);
+  showSource(`${item.name} · ses kaydından`, item.url, true);
   if (!$("title").value) $("title").value = item.name.replace(/\.[^.]+$/, "") + " (düzenleme)";
   // A source remembers the style and lyrics it was last used with.
   if (item.style) { $("style").value = item.style; $("style-set").value = ""; $("style-delete").classList.add("hidden"); }
-  if (item.lyrics) $("lyrics").value = editorLyrics(item) || item.lyrics;
+  if (item.lyrics) $("lyrics").value = item.lyrics;
   updateCreate();
+  renderSources();
+}
+
+// One of its eser tasarımları: the cover is made from that score, its lyrics, layout and tracks.
+function selectDesign(item, design) {
+  source = { id: item.id, name: item.name, url: item.url, folder_id: item.folder_id, design_id: design.id };
+  showSource(`${item.name} · ${design.name}`, item.url, true);
+  if (!$("title").value) $("title").value = item.name.replace(/\.[^.]+$/, "") + " (düzenleme)";
+  if (item.style) { $("style").value = item.style; $("style-set").value = ""; $("style-delete").classList.add("hidden"); }
+  $("lyrics").value = editorLyrics(design) || design.lyrics || item.lyrics || "";
+  updateCreate();
+  renderSources();
+}
+
+function updateDesign(updated) {
+  designs = designs.some((d) => d.id === updated.id) ? designs.map((d) => (d.id === updated.id ? updated : d)) : [...designs, updated];
   renderSources();
 }
 
@@ -354,8 +376,10 @@ function renderSources() {
     node.querySelector(".source-meta").textContent = [used ? `${used} düzenleme` : "", saved ? "✓ stil ve söz kayıtlı" : "",
       fmtAgo(item.created_at)].filter(Boolean).join(" · ");
     fillSourceScore(node, item);
-    node.querySelector(".use").textContent = source && source.id === item.id ? "Seçili" : "Bununla düzenle";
+    const audioPicked = source && source.id === item.id && !source.design_id;
+    node.querySelector(".use").textContent = audioPicked ? "✓ Ses kaydından (seçili)" : "🎧 Ses kaydından düzenle";
     node.querySelector(".use").onclick = () => { selectSource(item); window.scrollTo({ top: 0, behavior: "smooth" }); };
+    renderDesigns(node.querySelector(".designs"), item);
     // Do not overwrite what is being typed while the library refreshes.
     if (!node.classList.contains("editing")) {
       node.querySelector(".src-style").value = item.style || "";
@@ -411,14 +435,120 @@ const transcribeText = (item) => (item.transcribe_status === "running"
 function scoreSummary(item) {
   if (transcribing(item)) return { text: transcribeText(item), busy: true };
   if (item.transcribe_status === "failed" && !item.has_score) return { text: `⚠ Nota çıkarılamadı: ${item.transcribe_error || "bilinmeyen hata"}`, error: true };
-  if (!item.has_score) return { text: "Nota henüz çıkarılmadı. Düzenleme yapınca kendiliğinden çıkarılır; önce düzeltmek istersen sadece notayı çıkar." };
+  if (!item.has_score) return { text: "Melodi henüz notaya çıkarılmadı. Çıkarınca ilk eser tasarımı ondan oluşur; notayı, sözleri ve izleri orada hazırlarsın." };
   const versions = (item.transcripts || []).length;
-  const parts = [(item.score_edited ? "🎼 düzeltilmiş nota" : "🎼 çıkarılmış nota") + (versions > 1 ? ` (${versions} sürüm)` : "")];
-  const total = item.lyrics ? LyricsLayout.allSyllables(item.lyrics).length : 0;
-  const at = item.lyrics_layout && item.lyrics_layout.at;
-  if (total) parts.push(at && at.length === total ? `${at.filter((n) => n != null).length}/${total} hece yerleşik` : "heceler henüz yerleştirilmedi");
-  if (item.tracks && item.tracks.length) parts.push(`${item.tracks.length} iz`);
-  return { text: parts.join(" · ") };
+  return { text: `🎼 Melodi notaya çıkarıldı${versions > 1 ? ` (${versions} çıkarma)` : ""}` };
+}
+
+// What a design holds, in one line.
+function designSummary(design) {
+  const parts = [];
+  const total = design.lyrics ? LyricsLayout.allSyllables(design.lyrics).length : 0;
+  const at = design.lyrics_layout && design.lyrics_layout.at;
+  parts.push(!total ? "söz yok" : at && at.length === total ? `${at.filter((n) => n != null).length}/${total} hece yerleşik` : "heceler henüz yerleştirilmedi");
+  if (design.tracks && design.tracks.length) parts.push(`${design.tracks.length} iz`);
+  const used = jobs.filter((j) => j.design_id === design.id).length;
+  if (used) parts.push(`${used} düzenleme`);
+  return parts.join(" · ");
+}
+
+// The new-design form of one source, kept across redraws: { sourceId, name, start }.
+let designForm = null;
+
+function renderDesigns(box, item) {
+  const list = sourceDesigns(item);
+  const versions = item.transcripts || [];
+  box.classList.toggle("hidden", !item.has_score && !list.length);
+  if (!item.has_score && !list.length) { box.replaceChildren(); return; }
+  const head = el("div", "designs-head");
+  const title = el("span", "designs-title", null, "Eser tasarımları");
+  title.title = "Kayıttan ayrı, adlandırılmış hazırlıklar: her biri kendi notası, sözü, hece yerleşimi ve izleriyle YuE2'ye gider";
+  head.append(title);
+  const add = el("button", "btn ghost small", null, "＋ Yeni");
+  add.title = "Yeni eser tasarımı: melodi çıkarmasından ya da bir eser tasarımının kopyası olarak";
+  add.type = "button";
+  add.onclick = () => {
+    designForm = designForm && designForm.sourceId === item.id ? null : { sourceId: item.id, name: `Eser tasarımı ${list.length + 1}`, start: list.length ? `copy:${list[list.length - 1].id}` : "transcript:" };
+    renderSources();
+  };
+  head.append(add);
+  const rows = list.map((design) => {
+    const picked = source && source.design_id === design.id;
+    const row = el("div", "design" + (picked ? " selected" : ""));
+    const main = el("div", "design-main");
+    main.append(el("span", "design-name", null, design.name), el("span", "muted small", null, `${designSummary(design)} · ${design.origin || ""} · ${fmtAgo((design.updated_at || 0) * 1000)}`));
+    const actions = el("div", "design-actions");
+    const button = (text, title, run, cls = "btn ghost small") => {
+      const b = el("button", cls, null, text);
+      b.type = "button";
+      b.title = title;
+      b.onclick = run;
+      actions.append(b);
+      return b;
+    };
+    button("🎛 Aç", "Bu eser tasarımının notasını, hecelerini ve izlerini zaman çizgisinde düzenle", () => openDesignDaw(item, design));
+    button("👁 Önizle", "YuE2'ye gidecek hali: bu eser tasarımından YuE2'ye gönderilecek nota, söz ve stili gör", async () => {
+      try { showYuePreview(await prepareDesign(design, $("style").value.trim() || item.style || ""), `${item.name} · ${design.name}`, false); } catch (error) { report(error); }
+    });
+    button(picked ? "✓ Seçili" : "Bununla düzenle", "Düzenleme bu eser tasarımıyla yapılsın", () => { selectDesign(item, design); window.scrollTo({ top: 0, behavior: "smooth" }); },
+      "btn small " + (picked ? "ghost" : "primary"));
+    button("✎", "Adını değiştir", async () => {
+      const name = prompt("Eser tasarımının adı", design.name);
+      if (!name || !name.trim() || name.trim() === design.name) return;
+      try { updateDesign(await api(`/designs/${design.id}`, { method: "PATCH", body: JSON.stringify({ name: name.trim() }) })); } catch (error) { report(error); }
+    }, "icon-btn");
+    button("⧉", "Kopyasını oluştur (nota, söz, yerleşim ve izlerle)", async () => {
+      try { updateDesign(await api(`/sources/${item.id}/designs`, { method: "POST", body: JSON.stringify({ copy: design.id, name: `${design.name} (kopya)` }) })); } catch (error) { report(error); }
+    }, "icon-btn");
+    const download = el("a", "icon-btn", null, "⬇");
+    download.href = design.score_download;
+    download.title = "ABC dosyasını indir (sözsüz nota)";
+    actions.append(download);
+    button("🗑", "Sil", async () => {
+      if (!confirm(`"${design.name}" eser tasarımı silinsin mi? (Ondan yapılmış düzenlemeler kalır.)`)) return;
+      try {
+        await api(`/designs/${design.id}`, { method: "DELETE" });
+        designs = designs.filter((d) => d.id !== design.id);
+        if (source && source.design_id === design.id) clearSource();
+        renderSources();
+      } catch (error) { report(error); }
+    }, "icon-btn danger");
+    row.append(main, actions);
+    return row;
+  });
+  const parts = [head, ...rows];
+  if (!list.length) parts.push(el("div", "muted small", null, "Henüz eser tasarımı yok. ＋ ile melodi çıkarmasından bir tane oluştur."));
+  if (designForm && designForm.sourceId === item.id) {
+    const form = el("form", "design-form");
+    const name = el("input");
+    name.value = designForm.name;
+    name.maxLength = 80;
+    name.oninput = () => { designForm.name = name.value; };
+    const start = el("select", "small-select");
+    start.append(...versions.map((v, k) => new Option(`v${k + 1} melodi çıkarmasından · ${fmtStamp(v.at)}${v.active ? " (son kullanılan)" : ""}`, `transcript:${v.id}`)),
+      ...list.map((d) => new Option(`«${d.name}» kopyası`, `copy:${d.id}`)));
+    if (designForm.start === "transcript:") designForm.start = `transcript:${(versions.find((v) => v.active) || versions[versions.length - 1] || {}).id || ""}`;
+    start.value = designForm.start;
+    start.onchange = () => { designForm.start = start.value; };
+    const make = el("button", "btn primary small", null, "Oluştur");
+    const cancel = el("button", "btn ghost small", null, "Vazgeç");
+    cancel.type = "button";
+    cancel.onclick = () => { designForm = null; renderSources(); };
+    form.append(name, start, make, cancel);
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const [kind, id] = start.value.split(":");
+      const body = { name: name.value.trim() || "Yeni eser tasarımı", [kind === "copy" ? "copy" : "transcript"]: id };
+      make.disabled = true;
+      try {
+        const made = await api(`/sources/${item.id}/designs`, { method: "POST", body: JSON.stringify(body) });
+        designForm = null;
+        updateDesign(made);
+      } catch (error) { report(error); make.disabled = false; }
+    };
+    parts.push(form);
+  }
+  box.replaceChildren(...parts);
 }
 
 function fillSourceScore(node, item) {
@@ -431,11 +561,10 @@ function fillSourceScore(node, item) {
   const button = node.querySelector(".score-act");
   button.classList.toggle("hidden", !!summary.busy);
   button.disabled = false;
-  button.textContent = item.has_score ? "🎛 Notayı düzenle" : item.transcribe_status === "failed" ? "🎼 Tekrar dene" : "🎼 Notayı çıkar";
-  button.title = item.has_score
-    ? "Notayı, sözün hecelerini ve enstrüman izlerini zaman çizgisinde düzenle"
-    : "Kayıttaki melodiyi SheetSage2 ile notaya çevir ve bu bestede sakla (düzenleme yapmaz)";
-  button.onclick = () => (item.has_score ? openSourceDaw(item) : transcribeSource(item, button));
+  button.classList.toggle("hidden", !!summary.busy || item.has_score);
+  button.textContent = item.transcribe_status === "failed" ? "🎼 Tekrar dene" : "🎼 Notayı çıkar";
+  button.title = "Kayıttaki melodiyi SheetSage2 ile notaya çevir; ilk eser tasarımı ondan oluşur (düzenleme yapmaz)";
+  button.onclick = () => transcribeSource(item, button);
   const again = node.querySelector(".retranscribe");
   again.classList.toggle("hidden", !!summary.busy || !item.has_score);
   again.disabled = false;
@@ -533,8 +662,8 @@ function updateCreate() {
   $("create-note").textContent = warm
     ? `GPU açık · düzenleme başına ~1–3 dk`
     : `GPU kapalı · açılış ~3 dk + düzenleme ~1–3 dk${variants === 2 ? " (2 varyasyon birlikte)" : ""}`;
-  const item = selectedItem();
-  if (item && item.has_score) $("create-note").textContent += " · nota çıkarma adımı atlanır";
+  const design = selectedDesign();
+  $("create-note").textContent += design ? ` · eser tasarımı «${design.name}» ile` : " · ses kaydından";
 }
 
 const selectedItem = () => source && source.id && sources.find((s) => s.id === source.id);
@@ -544,29 +673,29 @@ const selectedItem = () => source && source.id && sources.find((s) => s.id === s
 function renderPrep() {
   const item = selectedItem();
   $("prep").classList.toggle("hidden", !item);
-  if (!item) { $("create").textContent = "🎤 Düzenleme yap"; return; }
+  $("create").textContent = "🎤 Düzenleme yap";
+  if (!item) return;
+  const design = selectedDesign();
   const busy = transcribing(item);
   const lines = [];
-  if (busy) lines.push(`${transcribeText(item)}. Bitince notayı, heceleri ve izleri zaman çizgisinde düzenleyebilirsin.`);
-  else if (!item.has_score) {
-    lines.push(item.transcribe_status === "failed" ? `⚠ Nota çıkarılamadı: ${item.transcribe_error || "bilinmeyen hata"}` : "Bu bestenin notası henüz çıkarılmadı.");
-    lines.push("Tek seferde: düğmeye bas, nota çıkarılır ve düzenleme yapılır (nota besteye de kaydedilir). Ya da önce sadece notayı çıkar, sözleri ve izleri hazırla.");
+  if (!design) {
+    lines.push("🎧 Ses kaydından: YuE2 melodiyi kayıttan kendisi çıkarır; söz ve stil formdan gider. Eser tasarımı kullanılmaz.");
+    if (busy) lines.push(`${transcribeText(item)}.`);
+    else if (item.has_score) lines.push("Notayı, hece yerleşimini ve izleri kendin belirlemek istersen aşağıdaki bestede bir eser tasarımı seç: \"Bununla düzenle\".");
+    else lines.push("Notayı, hece yerleşimini ve izleri kendin belirlemek istersen önce notayı çıkar; ilk eser tasarımı ondan oluşur.");
   } else {
-    const summary = scoreSummary(item).text;
-    lines.push(summary);
-    const lyrics = $("lyrics").value.trim(), edited = editorLyrics(item);
-    if (edited && lyrics && lyrics !== edited) lines.push('<span class="warn">⚠ Formdaki söz zaman çizgisindekinden farklı. Düzenleme zaman çizgisindeki sözle ve hece yerleşimiyle yapılır. Formdakini kullanmak istiyorsan 🎛 ile aç (formdaki söz açılır), hecelerini yerleştirip kaydet.</span>');
-    else if (edited) lines.push("Söz, hece yerleşimi, hecesiz ölçüler (enstrümana verilir), bölüm adları ve izler zaman çizgisinden alınıp YuE2'nin okuyacağı notaya, söze ve stile çevrilecek.");
-    else if (lyrics) lines.push('<span class="warn">⚠ Bu söz henüz zaman çizgisinde notaya yerleştirilmedi; heceler melodiye otomatik yerleştirilecek. 🎛 ile açıp kontrol edip kaydetmen önerilir.</span>');
+    lines.push(`🎼 Eser tasarımı «${design.name}»: ${designSummary(design)}`);
+    const lyrics = $("lyrics").value.trim(), edited = editorLyrics(design);
+    if (edited && lyrics && lyrics !== edited) lines.push('<span class="warn">⚠ Formdaki söz eser tasarımındakinden farklı. Düzenleme eser tasarımındaki sözle ve hece yerleşimiyle yapılır. Formdakini kullanmak istiyorsan 🎛 ile aç (formdaki söz açılır), hecelerini yerleştirip kaydet.</span>');
+    else if (edited) lines.push("Nota, söz, hece yerleşimi, hecesiz ölçüler (enstrümana verilir), bölüm adları ve izler eser tasarımından alınıp YuE2'nin okuyacağı notaya, söze ve stile çevrilecek.");
+    else if (lyrics) lines.push('<span class="warn">⚠ Bu söz eser tasarımında henüz notaya yerleştirilmedi; heceler melodiye otomatik yerleştirilecek. 🎛 ile açıp kontrol edip kaydetmen önerilir.</span>');
   }
   $("prep-state").innerHTML = lines.map((l) => `<div>${l.startsWith("<span") ? l : escapeHtml(l)}</div>`).join("");
   $("prep-progress").classList.toggle("hidden", !busy);
-  $("prep-transcribe").classList.toggle("hidden", busy);
-  $("prep-transcribe").textContent = item.has_score ? "🎼 Yeniden çıkar (yeni sürüm)" : "🎼 Sadece notayı çıkar";
-  $("prep-daw").classList.toggle("hidden", !item.has_score);
-  $("prep-preview").classList.toggle("hidden", !item.has_score);
-  $("create").textContent = item.has_score ? "🎤 Düzenleme yap" : "🎤 Notayı çıkar + düzenleme yap";
-  if (busy) $("create").disabled = true;
+  $("prep-transcribe").classList.toggle("hidden", busy || !!design || item.has_score);
+  $("prep-transcribe").textContent = "🎼 Notayı çıkar (eser tasarımı için)";
+  $("prep-daw").classList.toggle("hidden", !design);
+  $("prep-preview").classList.toggle("hidden", !design);
 }
 
 function escapeHtml(text) {
@@ -575,44 +704,43 @@ function escapeHtml(text) {
 
 $("prep-transcribe").addEventListener("click", () => { const item = selectedItem(); if (item) transcribeSource(item, $("prep-transcribe")); });
 $("prep-daw").addEventListener("click", () => {
-  const item = selectedItem();
-  if (!item) return;
+  const item = selectedItem(), design = selectedDesign();
+  if (!item || !design) return;
   // What is typed in the form is what gets laid out; unsaved lyrics are offered to the timeline.
   const lyrics = $("lyrics").value.trim();
-  openSourceDaw(item, lyrics && lyrics !== (item.lyrics || "").trim() ? lyrics : item.lyrics || "");
+  openDesignDaw(item, design, lyrics && lyrics !== (design.lyrics || "").trim() ? lyrics : design.lyrics || "");
 });
 $("prep-preview").addEventListener("click", async () => {
-  const item = selectedItem();
-  if (!item) return;
+  const item = selectedItem(), design = selectedDesign();
+  if (!item || !design) return;
   try {
-    const compiled = await prepareSource(item, $("lyrics").value.trim(), $("style").value.trim());
-    showYuePreview(compiled, item.name, false);
+    const compiled = await prepareDesign(design, $("style").value.trim(), $("lyrics").value.trim());
+    showYuePreview(compiled, `${item.name} · ${design.name}`, false);
   } catch (error) { $("create-error").textContent = `Önizleme hazırlanamadı: ${error.message}`; }
 });
 
-// The source's score with the lyrics laid on it and the tracks, as YuE2 will get it (arrange.js).
-const scoreTexts = new Map();   // url without its signature → abc
-async function sourceAbc(item) {
-  const url = item.score_url || item.transcript_url;
-  const key = url.split("?")[0] + (item.score_updated_at || "") + (item.transcribed_at || "");
+// A design's score with its lyrics laid on it and its tracks, as YuE2 will get it (arrange.js).
+const scoreTexts = new Map();   // design id + its last change → abc
+async function designAbc(design) {
+  const key = design.id + ":" + (design.updated_at || "");
   if (!scoreTexts.has(key)) {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`bestenin notası alınamadı (${response.status})`);
+    const response = await fetch(design.score_url);
+    if (!response.ok) throw new Error(`eser tasarımının notası alınamadı (${response.status})`);
     scoreTexts.set(key, await response.text());
   }
   return scoreTexts.get(key);
 }
 
-async function prepareSource(item, lyrics, style) {
-  const abc = await sourceAbc(item);
+// The timeline editor is the reference: the design's laid-out lyrics win over the form's.
+async function prepareDesign(design, style, lyrics = "") {
+  const abc = await designAbc(design);
   let map = null;
-  // The timeline editor is the reference: its lyrics and layout win over what the form says.
-  const edited = editorLyrics(item);
+  const edited = editorLyrics(design);
   if (edited) {
     lyrics = edited;
-    try { map = Timeline.mapFromOnsets(Timeline.build(abc), item.lyrics_layout.at); } catch (error) { map = null; }
-  }
-  return Arrange.compile({ abc, lyrics, map, tracks: item.tracks || [], style });
+    try { map = Timeline.mapFromOnsets(Timeline.build(abc), design.lyrics_layout.at); } catch (error) { map = null; }
+  } else lyrics = lyrics || design.lyrics || "";
+  return Arrange.compile({ abc, lyrics, map, tracks: design.tracks || [], style });
 }
 
 function showYuePreview(compiled, title, unsaved) {
@@ -655,11 +783,12 @@ $("create").addEventListener("click", async () => {
     };
     if (source.id) body.source_id = source.id;
     else { body.upload_key = source.key; body.source_name = source.name; }
-    // A source with a score: send it prepared (lyrics laid on it, unsung bars to the instrument,
-    // sections named after the lyrics, tracks in the style). Without one Turbo extracts it.
-    const item = selectedItem();
-    if (item && item.has_score) {
-      const compiled = await prepareSource(item, body.lyrics, body.style);
+    // An eser tasarımı: its score sent prepared (lyrics laid on it, unsung bars to the instrument,
+    // sections named after the lyrics, tracks in the style). Without one Turbo works from the audio.
+    const design = selectedDesign();
+    if (design) {
+      body.design_id = design.id;
+      const compiled = await prepareDesign(design, body.style, body.lyrics);
       if (compiled.style.length > 2000) throw new Error("İzlerle birlikte stil 2000 karakteri aşıyor; stili ya da iz açıklamalarını kısalt");
       Object.assign(body, { abc: compiled.abc, lyrics: compiled.lyrics, style: compiled.style, style_base: body.style,
         lyrics_layout: { at: compiled.at } });
@@ -950,7 +1079,8 @@ function fillJob(node, job) {
   const error = node.querySelector(".job-error");
   error.classList.toggle("hidden", !job.error);
   error.textContent = job.error || "";
-  const from = { prepared: " · 🎛 hazırlanmış nota", edited: " · 🎼 düzeltilmiş nota", transcript: " · 🎼 çıkarılmış nota" }[job.score_from] || "";
+  const from = job.design_name ? ` · 🎼 eser tasarımı «${job.design_name}»`
+    : { prepared: " · 🎛 hazırlanmış nota", edited: " · 🎼 düzeltilmiş nota", transcript: " · 🎼 çıkarılmış nota" }[job.score_from] || (job.status ? " · 🎧 ses kaydından" : "");
   node.querySelector(".meta").textContent = fmtAgo(job.created_at) + from;
   node.querySelector(".rename").onclick = async () => {
     const title = prompt("Şarkı adı", job.title);
@@ -1357,7 +1487,9 @@ function reuse(job) {
     return;
   }
   const saved = job.source_id && sources.find((s) => s.id === job.source_id);
-  if (saved) {
+  const design = saved && job.design_id && designs.find((d) => d.id === job.design_id);
+  if (design) selectDesign(saved, design);
+  else if (saved) {
     selectSource(saved);
   } else if (job.source_url && job.upload_key) {
     // Older jobs point at a temporary upload (kept 30 days).
@@ -1368,8 +1500,8 @@ function reuse(job) {
   $("title").value = job.title;
   $("style").value = job.style_base || job.style;
   $("lyrics").value = job.lyrics;
-  // What was sent is the compiled lyrics; a source laid out in the timeline keeps the editor's.
-  if (saved && editorLyrics(saved)) $("lyrics").value = editorLyrics(saved);
+  // What was sent is the compiled lyrics; a design laid out in the timeline keeps the editor's.
+  if (design && editorLyrics(design)) $("lyrics").value = editorLyrics(design);
   updateCreate();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -1417,6 +1549,7 @@ async function refresh() {
     gpu = status;
     folders = library.folders;
     sources = library.sources;
+    designs = library.designs || [];
     jobs = library.jobs;
     renderGpu();
     render();

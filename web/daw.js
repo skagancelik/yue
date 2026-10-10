@@ -45,55 +45,38 @@ function layoutMap(abc, lyrics, layout) {
   try { return Align.autoAlign(Timeline.build(abc), lyrics); } catch (error) { return new Array(total).fill(null); }
 }
 
-// From an arrangement's score window.
+// From an arrangement's score window: the score this arrangement was made with. Saving an edited
+// score keeps it as a new eser tasarımı of its source.
 async function openDaw() {
   const job = score.job;
   const item = scoreSource();
-  let abc = score.abc, origin = "bu düzenlemenin notası";
-  try {
-    if (item && item.score_edited && item.score_url) {
-      abc = await fetchText(item.score_url, "bestenin notası");
-      origin = "bestenin düzeltilmiş notası";
-    }
-  } catch (error) {
-    $("score-status").textContent = `Zaman çizgisi açılamadı: ${error.message}`;
-    return;
-  }
   const lyrics = score.layout.lyrics ?? job.lyrics ?? "";
-  // The layout belongs to this arrangement's score; on the source's corrected score the syllables
-  // go to the notes starting at the same moments.
-  const jobMap = layoutMap(score.abc, lyrics, score.layout);
-  let map = jobMap;
-  if (abc !== score.abc) {
-    try { map = carryMap(Timeline.build(score.abc), Timeline.build(abc), jobMap); } catch (error) { /* shown below */ }
-  }
   stopScore();
-  if (!startDaw({ ctx: "job", job, item, origin, abc, lyrics, map, tracks: [], title: job.title })) return;
+  daw.design = null;
+  startDaw({ ctx: "job", job, item, origin: "bu düzenlemenin notası", abc: score.abc, lyrics, map: layoutMap(score.abc, lyrics, score.layout), tracks: [], title: job.title });
 }
 
-// From a source song: its own score (corrected, else the extracted one), lyrics, layout and tracks.
-// `lyrics`: the lyrics typed in the form when they differ from the saved ones (laid out afresh and
-// saved on the source with the layout).
-async function openSourceDaw(item, lyrics = item.lyrics || "") {
+// An eser tasarımı of a source: its score, lyrics, layout and tracks. `lyrics`: the lyrics typed in
+// the form when they differ from the design's (laid out afresh and saved on it with the layout).
+async function openDesignDaw(item, design, lyrics = design.lyrics || "") {
   try {
     await loadAbcjs();
-    const url = item.score_url || item.transcript_url;
-    if (!url) throw new Error("bu bestenin notası henüz çıkarılmadı");
-    const abc = await fetchText(url, "bestenin notası");
-    const own = lyrics === (item.lyrics || "");
+    const abc = await designAbc(design);
+    const own = lyrics === (design.lyrics || "");
+    daw.design = design;
     const opened = startDaw({
-      ctx: "source", job: null, item, abc, lyrics, title: item.name,
-      origin: item.score_edited ? "bestenin düzeltilmiş notası" : transcriptOrigin(item),
-      map: layoutMap(abc, lyrics, own && item.lyrics_layout ? LyricsLayout.normalize(item.lyrics_layout) : null),
-      tracks: JSON.parse(JSON.stringify(item.tracks || [])).map((t) => ({ ...t, id: t.id || dawId() })),
+      ctx: "source", job: null, item, abc, lyrics, title: `${item.name} · ${design.name}`,
+      origin: `eser tasarımı «${design.name}»`,
+      map: layoutMap(abc, lyrics, own && design.lyrics_layout ? LyricsLayout.normalize(design.lyrics_layout) : null),
+      tracks: JSON.parse(JSON.stringify(design.tracks || [])).map((t) => ({ ...t, id: t.id || dawId() })),
     });
     if (!opened) return;
-    // An automatic layout is offered for saving like an edited one (the summary on the source card
-    // and the create panel then count it as placed).
-    const at = own && item.lyrics_layout && item.lyrics_layout.at;
+    // An automatic layout is offered for saving like an edited one (the design's summary then
+    // counts it as placed).
+    const at = own && design.lyrics_layout && design.lyrics_layout.at;
     if (!(at && at.length === daw.map.length) && daw.map.length) { daw.layoutFresh = true; renderDawBar(); }
     if (!own) { daw.layoutDirty = true; renderDawBar(); }
-    if (!own) dawMsg("Formdaki söz (bestede kayıtlı olandan farklı) melodiye otomatik yerleştirildi; Kaydet ile söz de besteye kaydedilir.");
+    if (!own) dawMsg("Formdaki söz (eser tasarımında kayıtlı olandan farklı) melodiye otomatik yerleştirildi; Kaydet ile söz de eser tasarımına kaydedilir.");
   } catch (error) { report(error); }
 }
 
@@ -128,12 +111,12 @@ function startDaw({ ctx, job, item, origin, abc, lyrics, map, tracks, title }) {
   if (unit % 8 === 0) $("daw-step").value = String(unit / 8);   // new notes and drags in eighths
   $("daw-title").textContent = title;
   $("daw").classList.toggle("source-mode", ctx === "source");
-  dawMsg(ctx === "source" && !(item.lyrics_layout && item.lyrics_layout.at && item.lyrics_layout.at.length === daw.map.length) && daw.map.length
+  const laid = daw.design && daw.design.lyrics_layout && daw.design.lyrics_layout.at;
+  dawMsg(ctx === "source" && !(laid && laid.length === daw.map.length) && daw.map.length
     ? "Heceler melodinin cümlelerine göre otomatik yerleştirildi. Kelimeyi ya da satırı seçip doğru notaya sürükle; sonrakiler kendiliğinden kayar."
     : "");
   closeTrackEditor();
   $("daw").showModal();
-  renderVersions();
   renderDaw();
   renderDawWords();
   $("daw-scroll").scrollLeft = 0;
@@ -528,7 +511,6 @@ function renderDawBar() {
   $("daw-undo").disabled = !daw.history.length;
   $("daw-save").disabled = !dawDirty() && !daw.layoutFresh;
   $("daw-after").disabled = !n;
-  $("daw-reset").classList.toggle("hidden", !(daw.item && daw.item.score_edited));
   $("daw-origin").textContent = `Nota: ${daw.origin}${daw.scoreDirty ? " (değişti)" : ""}`;
   $("daw-play").textContent = daw.playing ? "⏸" : "▶";
   $("daw-time").textContent = `${fmtTime(daw.pos)} / ${fmtTime(daw.tl.duration)}`;
@@ -1970,7 +1952,7 @@ function dawBaseStyle() {
 $("daw-preview").addEventListener("click", () => {
   try {
     const compiled = Arrange.compile({ abc: daw.abc, lyrics: daw.lyrics, map: daw.map, tracks: daw.tracks, style: dawBaseStyle() });
-    showYuePreview(compiled, daw.item ? daw.item.name : daw.job.title, daw.lyrics !== (daw.item && daw.item.lyrics) || dawDirty());
+    showYuePreview(compiled, daw.design ? `${daw.item.name} · ${daw.design.name}` : daw.job.title, dawDirty() || daw.layoutFresh);
   } catch (error) { dawMsg(`Önizleme hazırlanamadı: ${error.message}`); }
 });
 
@@ -1979,31 +1961,38 @@ $("daw-preview").addEventListener("click", () => {
 $("daw-save").addEventListener("click", async () => {
   const notes = [];
   $("daw-save").disabled = true;
+  const at = () => Timeline.onsets(daw.tl, daw.map);
+  const trackList = () => daw.tracks.map(({ id, instrument, feel, text, bars, lead }) => ({ id, instrument, feel: feel || [], text: text || "", bars: bars ?? null, lead: !!lead }));
   try {
-    if (daw.scoreDirty && daw.item) {
-      updateSource(await api(`/sources/${daw.item.id}/score`, { method: "PUT", body: JSON.stringify({ abc: daw.abc }) }));
-      setTimeout(renderVersions);
-      daw.item = sources.find((s) => s.id === daw.item.id);
-      daw.origin = "bestenin düzeltilmiş notası";
-      daw.scoreDirty = false;
-      if (daw.ctx === "job") { score.abc = daw.abc; daw.layoutDirty = true; }   // the paper view shows the corrected score from now on
-      notes.push(`Nota "${daw.item.name}" bestesine kaydedildi.`);
-    }
-    if (daw.ctx === "source") {
-      if (daw.layoutDirty || daw.layoutFresh || daw.tracksDirty) {
-        const item = daw.item;
-        const body = {};
-        if (daw.layoutDirty || daw.layoutFresh) body.lyrics_layout = { at: Timeline.onsets(daw.tl, daw.map) };
-        if (daw.lyrics !== (item.lyrics || "")) body.lyrics = daw.lyrics;
-        if (daw.tracksDirty) body.tracks = daw.tracks.map(({ id, instrument, feel, text, bars, lead }) => ({ id, instrument, feel: feel || [], text: text || "", bars: bars ?? null, lead: !!lead }));
-        const updated = await api(`/sources/${item.id}`, { method: "PATCH", body: JSON.stringify(body) });
-        updateSource(updated);
-        daw.item = sources.find((s) => s.id === item.id);
-        if (body.lyrics != null && source && source.id === item.id) $("lyrics").value = daw.lyrics;
-        daw.layoutDirty = daw.tracksDirty = daw.layoutFresh = false;
-        const what = [body.lyrics_layout && "hece yerleşimi", body.lyrics != null && "söz", body.tracks && "izler"].filter(Boolean);
-        notes.push(`${what.join(", ").replace(/^./, (c) => c.toUpperCase())} besteye kaydedildi; bu besteden yapılacak düzenlemeler bunlarla hazırlanır.`);
+    if (daw.design) {
+      // Everything belongs to the eser tasarımı; the source and the recording stay as they are.
+      const design = daw.design;
+      const body = {};
+      if (daw.scoreDirty) body.abc = daw.abc;
+      if (daw.scoreDirty || daw.layoutDirty || daw.layoutFresh) body.lyrics_layout = { at: at() };
+      if (daw.lyrics !== (design.lyrics || "")) body.lyrics = daw.lyrics;
+      if (daw.tracksDirty) body.tracks = trackList();
+      if (Object.keys(body).length) {
+        const updated = await api(`/designs/${design.id}`, { method: "PATCH", body: JSON.stringify(body) });
+        daw.design = updated;
+        updateDesign(updated);
+        if (body.lyrics != null && source && source.design_id === design.id) $("lyrics").value = daw.lyrics;
+        const what = [body.abc && "nota", body.lyrics_layout && "hece yerleşimi", body.lyrics != null && "söz", body.tracks && "izler"].filter(Boolean);
+        notes.push(`${what.join(", ").replace(/^./, (c) => c.toUpperCase())} «${updated.name}» eser tasarımına kaydedildi; onunla yapılacak düzenlemeler bunlarla hazırlanır.`);
       }
+      daw.scoreDirty = daw.layoutDirty = daw.tracksDirty = daw.layoutFresh = false;
+    } else if (daw.ctx === "job" && daw.scoreDirty && daw.item) {
+      // An arrangement's score edited: kept as a new eser tasarımı of its source.
+      const job = daw.job;
+      const made = await api(`/sources/${daw.item.id}/designs`, { method: "POST", body: JSON.stringify({
+        name: `${job.title} notası`, abc: daw.abc, lyrics: daw.lyrics, lyrics_layout: { at: at() }, tracks: trackList(),
+        origin: `«${job.title}» düzenlemesinden`,
+      }) });
+      daw.design = made;
+      daw.origin = `eser tasarımı «${made.name}»`;
+      updateDesign(made);
+      daw.scoreDirty = daw.layoutDirty = daw.tracksDirty = daw.layoutFresh = false;
+      notes.push(`Nota, söz ve hece yerleşimi "${daw.item.name}" bestesinde «${made.name}» adlı yeni eser tasarımı olarak kaydedildi. Ondan düzenleme yapmak için bestede "Bununla düzenle"yi seç.`);
     } else if (daw.layoutDirty) {
       const job = daw.job;
       const changed = daw.lyrics !== (job.lyrics || "");
@@ -2033,96 +2022,7 @@ $("daw-save").addEventListener("click", async () => {
   renderDawBar();
 });
 
-$("daw-reset").addEventListener("click", async () => {
-  const item = daw.item;
-  if (!item) return;
-  const back = item.transcript_url ? "SheetSage2'nin çıkardığı notaya dönülür" : "yeni düzenlemeler melodiyi yine kayıttan çıkarır";
-  if (!confirm(`"${item.name}" bestesinin düzeltilmiş notası silinsin mi? ${back}.${dawDirty() ? "\n\nKaydedilmemiş değişiklikler de silinir." : ""}`)) return;
-  try {
-    updateSource(await api(`/sources/${item.id}/score`, { method: "DELETE" }));
-    daw.item = sources.find((s) => s.id === item.id);
-    let abc;
-    if (daw.item.transcript_url) abc = await fetchText(daw.item.transcript_url, "çıkarılan nota");
-    else if (daw.ctx === "job") { abc = score.jobAbc; score.abc = score.jobAbc; }
-    else {
-      // No extracted score to go back to: the source has none until it is extracted again.
-      daw.scoreDirty = daw.layoutDirty = daw.tracksDirty = false;
-      closeDaw();
-      return;
-    }
-    replaceScore(abc, daw.item.transcript_url ? transcriptOrigin(daw.item) : "bu düzenlemenin notası");
-    dawMsg("Düzeltme silindi; özgün notaya dönüldü.");
-  } catch (error) { dawMsg(`Silinemedi: ${error.message}`); }
-});
-
-// A different score in the editor (the original, another extraction): the syllables go to the
-// notes starting at the same moments; the undo history starts again.
-function replaceScore(abc, origin) {
-  const model = ScoreModel.parse(abc), tl = Timeline.fromModel(model);
-  dawPause();
-  if (daw.synth) { daw.synth.stop(); daw.synth = null; }
-  const map = carryMap(daw.tl, tl, daw.map);
-  if (map.some((n, g) => n !== daw.map[g])) daw.layoutDirty = true;
-  Object.assign(daw, { model, abc, tl, map, origin, history: [], note: null, bars: null, scoreDirty: false });
-  renderDaw();
-}
-
-// ---- the source's melody extractions (versions)
-
 const fmtStamp = (seconds) => new Date(seconds * 1000).toLocaleString("tr-TR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-
-function transcriptOrigin(item) {
-  const versions = item.transcripts || [];
-  const k = versions.findIndex((v) => v.active);
-  return k < 0 ? "SheetSage2'nin çıkardığı nota" : `çıkarma v${k + 1}${versions.length > 1 ? ` / ${versions.length}` : ""}`;
-}
-
-function renderVersions() {
-  const versions = (daw.ctx === "source" && daw.item && daw.item.transcripts) || [];
-  $("daw-versions").classList.toggle("hidden", versions.length < 2 && !(daw.item && daw.item.score_edited && versions.length));
-  $("daw-version").replaceChildren(...versions.map((v, k) => {
-    const option = new Option(`v${k + 1} · ${fmtStamp(v.at)}${v.origin === "cover" ? " · düzenlemeden" : ""}${v.active ? " ✓" : ""}`, v.id);
-    option.selected = v.active;
-    return option;
-  }));
-  $("daw-version-delete").disabled = versions.filter((v) => !v.active).length === 0;
-}
-
-$("daw-version").addEventListener("change", async () => {
-  const item = daw.item;
-  const version = (item.transcripts || []).find((v) => v.id === $("daw-version").value);
-  if (!version || (version.active && !item.score_edited)) { renderVersions(); return; }
-  const warn = [item.score_edited ? "Bestenin düzeltilmiş notası silinecek (geri alınamaz)." : "",
-    daw.scoreDirty ? "Kaydedilmemiş nota değişiklikleri silinecek." : ""].filter(Boolean).join(" ");
-  if (warn && !confirm(`Bu sürümün notası açılsın mı? ${warn} Heceler notalarına zamanla taşınır.`)) { renderVersions(); return; }
-  try {
-    if (item.score_edited) updateSource(await api(`/sources/${item.id}/score`, { method: "DELETE" }));
-    updateSource(await api(`/sources/${item.id}`, { method: "PATCH", body: JSON.stringify({ transcript: version.id }) }));
-    daw.item = sources.find((s) => s.id === item.id);
-    replaceScore(await fetchText(daw.item.transcript_url, "nota sürümü"), transcriptOrigin(daw.item));
-    dawMsg(`v${daw.item.transcripts.findIndex((v) => v.active) + 1} açıldı; yeni düzenlemeler bu sürümle yapılır.`);
-  } catch (error) { dawMsg(`Sürüm açılamadı: ${error.message}`); }
-  renderVersions();
-});
-
-$("daw-version-delete").addEventListener("click", async () => {
-  const item = daw.item;
-  const versions = item.transcripts || [];
-  const others = versions.map((v, k) => (v.active ? null : `v${k + 1}`)).filter(Boolean);
-  if (!others.length) return;
-  const answer = prompt(`Hangi nota sürümü silinsin? (${others.join(", ")}; kullanılan sürüm silinemez)`, others[0]);
-  if (answer == null) return;
-  const k = Number(String(answer).trim().replace(/^v/i, "")) - 1;
-  if (!versions[k] || versions[k].active) { dawMsg("Böyle silinebilir bir sürüm yok."); return; }
-  try {
-    updateSource(await api(`/sources/${item.id}`, { method: "PATCH", body: JSON.stringify({ delete_transcript: item.transcripts[k].id }) }));
-    daw.item = sources.find((s) => s.id === item.id);
-    daw.origin = item.score_edited ? daw.origin : transcriptOrigin(daw.item);
-    dawMsg("Sürüm silindi.");
-  } catch (error) { dawMsg(`Silinemedi: ${error.message}`); }
-  renderVersions();
-  renderDawBar();
-});
 
 function closeDaw() {
   if (dawDirty() && !confirm("Kaydedilmemiş değişiklikler silinsin mi?")) return;
