@@ -1369,7 +1369,15 @@ function markedBars() {
   if (!items.length) return null;
   const u0 = Math.min(...items.map((n) => n.u0)), u1 = Math.max(...items.map((n) => n.u1));
   const bars = daw.tl.bars;
-  return [bars.findIndex((b) => u0 < b.u1), bars.findIndex((b) => u1 <= b.u1)];
+  let from = bars.findIndex((b) => u0 < b.u1), to = bars.findIndex((b) => u1 <= b.u1);
+  if (to < 0) to = bars.length - 1;
+  // An edge bar the picked notes only touch (a note held over the bar line, a pickup) stays
+  // with its own section; the section is the bars the picked notes mostly fill.
+  const covered = (bar) => items.reduce((sum, n) => sum + Math.max(0, Math.min(n.u1, bar.u1) - Math.max(n.u0, bar.u0)), 0);
+  const slight = (bar) => covered(bar) * 2 < bar.u1 - bar.u0;
+  while (from < to && slight(bars[from])) from++;
+  while (to > from && slight(bars[to])) to--;
+  return [from, to];
 }
 
 // The picked notes' bars as one section of the score (intro, verse, chorus …); the syllables sung
@@ -1378,12 +1386,23 @@ function assignDawSection(label) {
   const range = markedBars();
   if (!range || scoreLocked()) return;
   const [from, to] = range, { bars } = daw.tl;
-  const sung = daw.map.map((m, g) => (m != null && daw.tl.vocal[m].u0 >= bars[from].u0 && daw.tl.vocal[m].u0 < bars[to].u1 ? g : -1)).filter((g) => g >= 0);
+  const inside = (g) => daw.map[g] != null && daw.tl.vocal[daw.map[g]].u0 >= bars[from].u0 && daw.tl.vocal[daw.map[g]].u0 < bars[to].u1;
+  const sung = daw.map.map((m, g) => (inside(g) ? g : -1)).filter((g) => g >= 0);
+  // Only words sung wholly inside these bars change section: a word reaching over the edge,
+  // and every syllable before or after, keeps the section it is in.
+  const syls = LyricsLayout.allSyllables(daw.lyrics);
+  let first = sung[0], last = sung[sung.length - 1];
+  const wordStart = (g) => { while (g > 0 && syls[g - 1].joined) g--; return g; };
+  const wordEnd = (g) => { while (g < syls.length - 1 && syls[g].joined) g++; return g; };
+  const whole = (g) => { for (let k = wordStart(g); k <= wordEnd(g); k++) if (!inside(k)) return false; return true; };
+  while (first <= last && !whole(first)) first = wordEnd(first) + 1;
+  while (last >= first && !whole(last)) last = wordStart(last) - 1;
   const tag = Arrange.tagText(label);
-  const lyrics = sung.length ? LyricsLayout.retag(daw.lyrics, sung[0], sung[sung.length - 1], tag) : null;
+  const retagged = sung.length && first <= last;
+  const lyrics = retagged ? LyricsLayout.retag(daw.lyrics, first, last, tag) : null;
   try {
     dawScore(ScoreModel.setSection(daw.model, from, to, label), null, null, daw.map, lyrics);
-    dawMsg(`${from === to ? `Ölçü ${from + 1}` : `Ölçü ${from + 1}–${to + 1}`} artık ${label}${sung.length ? `; üzerindeki sözler de [${tag}] bölümü oldu` : ""} (geri alınabilir).`);
+    dawMsg(`${from === to ? `Ölçü ${from + 1}` : `Ölçü ${from + 1}–${to + 1}`} artık ${label}${retagged ? `; tamamı burada söylenen sözler de [${tag}] bölümü oldu` : ""} (geri alınabilir).`);
   } catch (error) { dawMsg(error.message); }
 }
 
@@ -1406,6 +1425,31 @@ function dragPlayhead(event) {
   };
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", up);
+}
+
+// The empty bars after the song's last note (in either voice): how many there are.
+function trailingBars() {
+  const end = Math.max(0, ...[...daw.tl.vocal, ...daw.tl.ins].map((n) => n.u1));
+  const keep = Math.max(1, daw.tl.bars.filter((b) => b.u0 < end).length);
+  return daw.tl.bars.length - keep;
+}
+
+// Takes the empty bars at the end of the song out; the tracks end with the song.
+function trimDawEnd() {
+  const extra = trailingBars();
+  if (!extra || scoreLocked()) return;
+  const keep = daw.model.bars.length - extra;
+  try {
+    dawScore({ ...daw.model, bars: daw.model.bars.slice(0, keep) }, null, null, daw.map);
+  } catch (error) { dawMsg(error.message); return; }
+  let cut = false;
+  for (const track of daw.tracks) {
+    if (!track.bars) continue;
+    const bars = track.bars.filter(([a]) => a < keep).map(([a, z]) => [a, Math.min(z, keep - 1)]);
+    if (JSON.stringify(bars) !== JSON.stringify(track.bars)) { track.bars = bars; cut = true; }
+  }
+  if (cut) { daw.tracksDirty = true; renderDaw(); }
+  dawMsg(`Sondaki ${extra} boş ölçü silindi; şarkı artık ${keep} ölçü (geri alınabilir).`);
 }
 
 function closeDawMenu() {
@@ -1440,7 +1484,7 @@ function openDawMenu(event) {
     return button;
   };
   // The section names, in place of the menu's items.
-  const range = has && markedBars();
+  const range = has && markedBars(), extra = trailingBars();
   function sectionList() {
     const [from, to] = range;
     menu.replaceChildren(el("div", "menu-label", null, from === to ? `Ölçü ${from + 1} bölümü` : `Ölçü ${from + 1}–${to + 1} bölümü`),
@@ -1454,6 +1498,8 @@ function openDawMenu(event) {
     item("Sil", "⌫", has, () => deleteDawNotes(false), " danger"),
     el("div", "menu-divider"),
     item("Bölüm ata (verse, chorus …)", "▸", !!range, sectionList),
+    el("div", "menu-divider"),
+    item(extra ? `Sondaki boşluğu sil (${extra} boş ölçü)` : "Sonda boş ölçü yok", "", !!extra, trimDawEnd),
   );
   const host = $("daw").getBoundingClientRect();
   $("daw").append(menu);
