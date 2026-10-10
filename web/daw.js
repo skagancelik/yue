@@ -17,7 +17,7 @@
 const daw = {
   ctx: "job", job: null, item: null, origin: "", model: null, abc: "", tl: null, lyrics: "", map: [], words: null, sylls: [],
   tracks: [], history: [], sel: new Set(), marked: new Set(), anchor: null, tray: null, note: null, bars: null, sung: new Set(),
-  pps: 70, pos: 0, playing: false, synth: null, startedAt: 0, raf: 0, focus: null, els: null, selMode: "word",
+  pps: 70, pos: 0, playing: false, follow: true, synth: null, startedAt: 0, raf: 0, focus: null, els: null, selMode: "word",
   scoreDirty: false, layoutDirty: false, tracksDirty: false, trackOpen: null,
   layoutFresh: false,   // an automatic layout that was never saved (saving it is offered, closing does not ask)
 };
@@ -583,6 +583,7 @@ async function dawPlay() {
     if (daw.pos >= daw.tl.duration - 0.05) daw.pos = 0;
     synth.seek(daw.pos, "seconds");
     synth.start();
+    daw.follow = true;
     daw.startedAt = score.audio.currentTime - daw.pos;
     daw.playing = true;
     const tick = () => {
@@ -590,9 +591,12 @@ async function dawPlay() {
       daw.pos = score.audio.currentTime - daw.startedAt;
       if (daw.pos >= daw.tl.duration) { dawPause(); daw.pos = daw.tl.duration; placePlayhead(); return; }
       placePlayhead();
-      // Keep the playhead in view.
+      // Keep the playhead in view, unless the view was scrolled by hand: then it is left where it is
+      // until the playhead comes into it again (or the next play).
       const scroll = $("daw-scroll"), x = dawX(daw.pos);
-      if (x > scroll.scrollLeft + scroll.clientWidth - 80 || x < scroll.scrollLeft + DAW_LEFT) scroll.scrollLeft = x - DAW_LEFT - 40;
+      const outside = x > scroll.scrollLeft + scroll.clientWidth - 80 || x < scroll.scrollLeft + DAW_LEFT;
+      if (!daw.follow && !outside) daw.follow = true;
+      if (daw.follow && outside) scroll.scrollLeft = x - DAW_LEFT - 40;
       daw.raf = requestAnimationFrame(tick);
     };
     daw.raf = requestAnimationFrame(tick);
@@ -1519,6 +1523,7 @@ function paintTrack(event, k) {
 
 $("daw-scroll").addEventListener("pointerdown", (event) => {
   const target = event.target;
+  if (target === event.currentTarget) { daw.follow = false; return; }   // its scrollbar
   closeDawMenu();
   if (event.button !== 0) return;   // a right click opens the menu
   if (target.closest(".daw-ask")) return;   // its buttons answer on click
@@ -1766,7 +1771,7 @@ $("daw-zoom-in").addEventListener("click", () => zoomDaw(1.4));
 $("daw-zoom-out").addEventListener("click", () => zoomDaw(1 / 1.4));
 // ⌘/Ctrl + wheel and a trackpad pinch zoom the time axis at the pointer.
 $("daw-scroll").addEventListener("wheel", (event) => {
-  if (!(event.ctrlKey || event.metaKey)) return;
+  if (!(event.ctrlKey || event.metaKey)) { if (event.deltaX || event.shiftKey) daw.follow = false; return; }
   event.preventDefault();
   zoomDaw(Math.exp(-event.deltaY * (event.deltaMode === 1 ? 0.05 : 0.0025)), event.clientX);
 }, { passive: false });
