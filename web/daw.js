@@ -520,7 +520,7 @@ function renderDawBar() {
   let info;
   if (daw.tray != null) info = `«${daw.sylls[daw.tray].text}» hecesini koymak için bir vokal notasına tıkla.`;
   else if (note) info = "↑/↓ yarım ses (Shift: oktav) · A/S (+/−) uzat/kısalt · ←/→ önceki/sonraki · D/F (Alt+←/→): devamıyla ötele · I: önüne nota ekle · Shift+sürükle: devamıyla taşı · Delete: sus · N: notaya çevir";
-  else if (daw.marked.size) info = `${daw.marked.size} nota seçili · Delete: sil · ⌘X: kes · ⌘C: kopyala · sarı çizgiyi sürükle, ⌘V: oraya yapıştır (devamı ötelenir) · ⌘+tık: ekle/çıkar · sağ tık: menü, bölüm ata`;
+  else if (daw.marked.size) info = `${daw.marked.size} nota seçili · ←/→ ötele (Alt: ince) · ↑/↓ yarım ses (Shift: oktav) · sürükle: sağa/sola · Delete: sil · ⌘X: kes · ⌘C: kopyala · sarı çizgiyi sürükle, ⌘V: oraya yapıştır (devamı ötelenir) · ⌘+tık: ekle/çıkar · sağ tık: menü, bölüm ata`;
   else if (daw.bars) info = "Seçili ölçülere bölüm adı ver ya da söylenen ve çalınan notaları değiştir.";
   else if (n) info = `${n} hece seçili · sürükle: bıraktığın notadan başlayarak notalara dizilir (Alt: aralıkları koru), önündekiler kayar · ←/→ bir nota kaydır · çift tık: harfleri düzelt · Delete: sil`;
   else info = `Tıkla: ${daw.selMode === "word" ? "kelime" : "hece"} seç (Alt+tık: ${daw.selMode === "word" ? "tek hece" : "kelime"}) · boş yerden sürükle: alan seç (melodide: notaları seç, kes/kopyala/yapıştır) · Shift: aralık · ⌘/Ctrl: ekle · notaya tıkla: perde/süre · sürükle: taşı (Shift: devamıyla) · uçlarını çek: uzat/kısalt · melodide boş yere çift tık: yeni nota · Boşluk: çal`;
@@ -1310,6 +1310,54 @@ function pasteClip(clip, u, withLyrics) {
   } catch (error) { dawMsg(error.message); }
 }
 
+// The picked notes moved `by` units and `semitones` up; they overwrite what they land on. The
+// syllables go with their notes (by the unit they start on), those on overwritten notes go to the list.
+function moveMarked(by, semitones) {
+  const pick = markedPick();
+  if (!(pick.vocal.length + pick.ins.length) || (!by && !semitones) || scoreLocked()) return;
+  try {
+    const { model, overwritten } = ScoreModel.moveNotes(daw.model, pick, by, semitones);
+    const tl = Timeline.fromModel(model);
+    const at = Timeline.onsets(daw.tl, daw.map).map((u) => (u != null && pick.vocal.includes(u) ? u + by : u));
+    daw.marked = new Set(["vocal", "ins"].flatMap((voice) => pick[voice].map((u) => `${voice}:${u + by}`)));
+    Object.assign(daw, { note: null, tray: null, bars: null });
+    dawScore(model, null, null, Timeline.mapFromOnsets(tl, at));
+    if (semitones) {
+      const top = daw.tl.vocal.concat(daw.tl.ins).find((n) => daw.marked.has(noteKey(n)));
+      if (top && !daw.playing) playPitch(top.midi);
+    }
+    const said = $("daw-msg").textContent;
+    dawMsg([by ? `${by > 0 ? "İleri" : "Geri"} ${durationText(Math.abs(by))}` : `${semitones > 0 ? "+" : ""}${semitones} yarım ses`,
+      overwritten ? `${overwritten} notanın üstüne yazıldı` : "", said].filter(Boolean).join(" · "));
+  } catch (error) { dawMsg(error.message); }
+}
+
+// Dragging picked notes by one of them: left/right only, unit by unit (the finest grid).
+function dragMarked(event, item) {
+  const x0 = event.clientX;
+  const boxes = [...daw.rollGeom.el.querySelectorAll(".daw-note.marked, .daw-ins.marked")];
+  const pick = markedPick();
+  const first = Math.min(...pick.vocal, ...pick.ins);
+  let moved = false, by = 0;
+  const move = (e) => {
+    if (!moved && Math.abs(e.clientX - x0) < 4) return;
+    moved = true;
+    closeAskDaw();
+    by = Math.max(-first, Math.round((e.clientX - x0) / daw.pps / daw.tl.perUnit));
+    for (const b of boxes) { b.classList.add("resizing"); b.style.transform = `translateX(${by * daw.tl.perUnit * daw.pps}px)`; }
+    dawMsg(`${by >= 0 ? "İleri" : "Geri"} ${durationText(Math.abs(by)) || "0"} · ${boxes.length} nota`);
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    if (!moved) { pickDawNote(item); return; }
+    if (!by) { renderDaw(); dawMsg(""); return; }
+    moveMarked(by, 0);
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
+
 // The bars the picked notes are in: [from, to].
 function markedBars() {
   const pick = markedPick();
@@ -1556,6 +1604,7 @@ $("daw-scroll").addEventListener("pointerdown", (event) => {
       renderDaw();
       return;
     }
+    if (item && item.midi != null && daw.marked.has(noteKey(item))) { dragMarked(event, item); return; }
     if (item && item.midi != null) dragNote(event, noteBox, item);
     else if (item) pickDawNote(item);
     return;
@@ -1639,6 +1688,14 @@ $("daw").addEventListener("keydown", (event) => {
     if (key === "c" && notes) { event.preventDefault(); copyDawNotes(); return; }
     if (key === "x" && notes) { event.preventDefault(); deleteDawNotes(true); return; }
     if (key === "v") { event.preventDefault(); pasteDawNotes(); return; }
+  }
+  if (daw.marked.size && !mod && /^Arrow/.test(event.key)) {
+    event.preventDefault();
+    const fine = event.altKey ? 1 : stepUnits();
+    if (event.key === "ArrowLeft") moveMarked(-fine, 0);
+    else if (event.key === "ArrowRight") moveMarked(fine, 0);
+    else moveMarked(0, (event.key === "ArrowUp" ? 1 : -1) * (event.shiftKey ? 12 : 1));
+    return;
   }
   if ((event.key === "Delete" || event.key === "Backspace") && daw.marked.size) { event.preventDefault(); deleteDawNotes(false); return; }
   if (event.key === "Escape" && (daw.sel.size || daw.marked.size || daw.tray != null || daw.note || daw.bars || daw.trackOpen != null)) {
