@@ -16,7 +16,7 @@
 
 const daw = {
   ctx: "job", job: null, item: null, origin: "", model: null, abc: "", tl: null, lyrics: "", map: [], words: null, sylls: [],
-  tracks: [], history: [], sel: new Set(), anchor: null, tray: null, note: null, bars: null, sung: new Set(),
+  tracks: [], history: [], sel: new Set(), marked: new Set(), anchor: null, tray: null, note: null, bars: null, sung: new Set(),
   pps: 70, pos: 0, playing: false, synth: null, startedAt: 0, raf: 0, focus: null, els: null, selMode: "word",
   scoreDirty: false, layoutDirty: false, tracksDirty: false, trackOpen: null,
   layoutFresh: false,   // an automatic layout that was never saved (saving it is offered, closing does not ask)
@@ -115,7 +115,7 @@ function startDaw({ ctx, job, item, origin, abc, lyrics, map, tracks, title }) {
     if (ctx === "job") $("score-status").textContent = message; else report(new Error(message));
     return false;
   }
-  Object.assign(daw, { ctx, job, item, origin, abc, model, tl, lyrics, map, tracks, history: [], sel: new Set(), anchor: null, tray: null,
+  Object.assign(daw, { ctx, job, item, origin, abc, model, tl, lyrics, map, tracks, history: [], sel: new Set(), marked: new Set(), anchor: null, tray: null,
     note: null, bars: null, pos: 0, focus: null, scoreDirty: false, layoutDirty: false, tracksDirty: false, trackOpen: null, layoutFresh: false });
   if (daw.map.length !== LyricsLayout.allSyllables(lyrics).length) daw.map = Align.autoAlign(tl, lyrics);
   // Zoom so a typical note is wide enough for its syllable.
@@ -226,7 +226,11 @@ function renderDaw() {
   for (const bar of tl.bars) roll.append(el("div", "daw-bar-line", { left: dawX(bar.t0) + "px" }));
   const span = (item) => ({ left: dawX(item.t0) + "px", width: Math.max(3, (item.t1 - item.t0) * daw.pps - 1) + "px" });
   const picked = (item) => daw.note && daw.note.voice === item.voice && daw.note.bar === item.bar && daw.note.k === item.k;
-  const tag = (node, item) => { node.dataset.voice = item.voice; node.dataset.bar = item.bar; node.dataset.k = item.k; return node; };
+  const tag = (node, item) => {
+    Object.assign(node.dataset, { voice: item.voice, bar: item.bar, k: item.k, u0: item.u0 });
+    if (item.midi != null && daw.marked.has(noteKey(item))) node.classList.add("marked");
+    return node;
+  };
   // The edges of a note: drag one to lengthen or shorten the note on that side.
   const grip = (box) => { box.append(el("div", "rz rz-left", null), el("div", "rz", null)); return box; };
   for (const note of tl.ins) {
@@ -333,6 +337,9 @@ function renderDaw() {
     lanes.append(el("div", "daw-range", { left: dawX(tl.bars[a].t0) + "px", width: (tl.bars[b].t1 - tl.bars[a].t0) * daw.pps + "px" }));
   }
   const head = el("div", "daw-playhead");
+  const knob = el("div", "daw-playhead-grip");
+  knob.title = "Sürükle: çalma çizgisini taşı (notaların başına yapışır) · ⌘V buraya yapıştırır";
+  head.append(knob);
   daw.els.playhead = head;
   lanes.append(head);
   const scroll = $("daw-scroll");
@@ -498,9 +505,11 @@ function renderDawBar() {
     const pick = daw.note;
     const tied = note.tieOut || note.contIn ? " · ölçü çizgisinin üzerinden bağlı" : "";
     $("daw-note-info").textContent = `${note.rest ? "Sus" : ScoreModel.pitchName(note)} · ${durationText(note.dur)} · ${pick.voice === "vocal" ? "Vokal" : "Enstrüman"}, ölçü ${pick.bar + 1}${tied}`;
+    $("daw-note-info").title = $("daw-note-info").textContent;
+    // Buttons that do not apply are dimmed, not hidden: the others keep their places.
     for (const button of document.querySelectorAll("#daw-note-tools [data-note]")) {
       const op = button.dataset.note;
-      button.classList.toggle("hidden", (op === "note" && !note.rest) || (op === "rest" && note.rest)
+      button.disabled = ((op === "note" && !note.rest) || (op === "rest" && note.rest)
         || (note.rest && ["up", "down", "octave-up", "octave-down", "shift-back", "shift-on", "insert"].includes(op)));
     }
   }
@@ -510,10 +519,11 @@ function renderDawBar() {
   }
   let info;
   if (daw.tray != null) info = `«${daw.sylls[daw.tray].text}» hecesini koymak için bir vokal notasına tıkla.`;
-  else if (note) info = "↑/↓ yarım ses (Shift: oktav) · +/− uzat/kısalt · ←/→ önceki/sonraki · Alt+←/→: devamıyla ötele · I: önüne nota ekle · Shift+sürükle: devamıyla taşı · Delete: sus · N: notaya çevir";
+  else if (note) info = "↑/↓ yarım ses (Shift: oktav) · A/S (+/−) uzat/kısalt · ←/→ önceki/sonraki · D/F (Alt+←/→): devamıyla ötele · I: önüne nota ekle · Shift+sürükle: devamıyla taşı · Delete: sus · N: notaya çevir";
+  else if (daw.marked.size) info = `${daw.marked.size} nota seçili · Delete: sil · ⌘X: kes · ⌘C: kopyala · sarı çizgiyi sürükle, ⌘V: oraya yapıştır (devamı ötelenir) · ⌘+tık: ekle/çıkar · sağ tık: menü, bölüm ata`;
   else if (daw.bars) info = "Seçili ölçülere bölüm adı ver ya da söylenen ve çalınan notaları değiştir.";
   else if (n) info = `${n} hece seçili · sürükle: bıraktığın notadan başlayarak notalara dizilir (Alt: aralıkları koru), önündekiler kayar · ←/→ bir nota kaydır · çift tık: harfleri düzelt · Delete: sil`;
-  else info = `Tıkla: ${daw.selMode === "word" ? "kelime" : "hece"} seç (Alt+tık: ${daw.selMode === "word" ? "tek hece" : "kelime"}) · boş yerden sürükle: alan seç · Shift: aralık · ⌘/Ctrl: ekle · notaya tıkla: perde/süre · sürükle: taşı (Shift: devamıyla) · uçlarını çek: uzat/kısalt · melodide boş yere çift tık: yeni nota · Boşluk: çal`;
+  else info = `Tıkla: ${daw.selMode === "word" ? "kelime" : "hece"} seç (Alt+tık: ${daw.selMode === "word" ? "tek hece" : "kelime"}) · boş yerden sürükle: alan seç (melodide: notaları seç, kes/kopyala/yapıştır) · Shift: aralık · ⌘/Ctrl: ekle · notaya tıkla: perde/süre · sürükle: taşı (Shift: devamıyla) · uçlarını çek: uzat/kısalt · melodide boş yere çift tık: yeni nota · Boşluk: çal`;
   $("daw-info").textContent = info;
   $("daw-undo").disabled = !daw.history.length;
   $("daw-save").disabled = !dawDirty() && !daw.layoutFresh;
@@ -633,10 +643,13 @@ function dawChange(next) {
 
 // A new score: the synth must be primed again and the syllables follow their notes by time
 // (or keep `keepMap`, when the notes stay in order and only one moved).
-function dawScore(model, note, bars, keepMap) {
+// `lyrics`: new lyrics going with it (syllables taken out or put in with the notes).
+function dawScore(model, note, bars, keepMap, lyrics) {
   const abc = ScoreModel.serialize(model).text;
   const tl = Timeline.build(abc);
   daw.history.push(dawSnapshot());
+  const lyricsChanged = lyrics != null && lyrics !== daw.lyrics;
+  if (lyricsChanged) { daw.lyrics = lyrics; daw.layoutDirty = true; }
   const map = keepMap || carryMap(daw.tl, tl, daw.map);
   if (map.some((n, g) => (n == null) !== (daw.map[g] == null))) daw.layoutDirty = true;
   dawPause();
@@ -645,6 +658,7 @@ function dawScore(model, note, bars, keepMap) {
   Object.assign(daw, { model, abc, tl, map, note, bars: bars === undefined ? daw.bars : bars, scoreDirty: true });
   dawMsg(lost > 0 ? `${lost} hece notasız kaldı (aşağıdaki listede). Söz listesinden sürükleyip yerleştir ya da "Otomatik yerleştir"e bas.` : "");
   renderDaw();
+  if (lyricsChanged) renderDawWords();
 }
 
 const scoreLocked = () => {
@@ -762,9 +776,11 @@ function closeAskDaw() {
 
 // Unit position under the pointer (fractional).
 function unitAt(clientX) {
-  const t = Math.max(0, Math.min(daw.tl.duration - 1e-6, timeAt(clientX)));
-  const bar = daw.tl.bars[barAt(t)];
-  return bar.u0 + ((t - bar.t0) / (bar.t1 - bar.t0)) * (bar.u1 - bar.u0);
+  return unitOfTime(Math.min(daw.tl.duration - 1e-6, timeAt(clientX)));
+}
+function unitOfTime(t) {
+  const bar = daw.tl.bars[barAt(Math.max(0, t))];
+  return bar.u0 + Math.max(0, Math.min(1, (t - bar.t0) / (bar.t1 - bar.t0))) * (bar.u1 - bar.u0);
 }
 
 // Dragging a note's edge (right: its end, left: its start): the length follows the pointer in
@@ -899,6 +915,7 @@ function stepDawNote(direction) {
 function pickDawNote(item) {
   daw.note = { voice: item.voice, bar: item.bar, k: item.k };
   daw.sel.clear();
+  daw.marked.clear();
   daw.tray = null;
   daw.bars = null;
   dawMsg("");
@@ -986,6 +1003,7 @@ function clickUnit(g, event) {
 
 function selectDaw(g, event, unit = clickUnit(g, event)) {
   daw.tray = null;
+  daw.marked.clear();
   daw.note = null;
   daw.bars = null;
   if (event.shiftKey && daw.anchor != null) {
@@ -1092,7 +1110,7 @@ function marquee(event) {
   let moved = false;
   const move = (e) => {
     if (!moved && Math.abs(e.clientX - x0) < 4) return;
-    if (!moved) { lanes.append(box); moved = true; Object.assign(daw, { tray: null, note: null, bars: null }); }
+    if (!moved) { lanes.append(box); moved = true; Object.assign(daw, { tray: null, note: null, bars: null }); daw.marked.clear(); }
     const t1 = timeAt(e.clientX);
     const [a, b] = [Math.min(t0, t1), Math.max(t0, t1)];
     Object.assign(box.style, { left: dawX(a) + "px", width: (b - a) * daw.pps + "px" });
@@ -1105,14 +1123,293 @@ function marquee(event) {
     window.removeEventListener("pointerup", up);
     box.remove();
     if (moved) { daw.anchor = daw.sel.size ? Math.min(...daw.sel) : null; renderDaw(); return; }
-    if (daw.sel.size || daw.tray != null || daw.note || daw.bars) {
+    if (daw.sel.size || daw.marked.size || daw.tray != null || daw.note || daw.bars) {
       Object.assign(daw, { tray: null, note: null, bars: null });
       daw.sel.clear();
+      daw.marked.clear();
       renderDaw();
     }
   };
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", up);
+}
+
+// ---- several notes at once: a rubber band in the melody lane picks notes (sung or not, both
+// voices); they are deleted, cut or copied, and pasted where the playhead is, the first note on it,
+// everything from there on moving on to make room.
+
+const noteKey = (item) => `${item.voice}:${item.u0}`;
+let dawClip = null;   // stays when another song is opened, to paste there
+
+function marqueeNotes(event) {
+  const roll = daw.rollGeom.el;
+  const at = (e) => { const r = roll.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  const p0 = at(event);
+  const before = event.shiftKey || event.metaKey || event.ctrlKey ? new Set(daw.marked) : new Set();
+  const boxes = [...roll.querySelectorAll(".daw-note, .daw-ins")];
+  const box = el("div", "daw-marquee daw-marquee-notes");
+  const scroll = $("daw-scroll");
+  let moved = false, last = event;
+  const move = (e) => {
+    last = e;
+    const p = at(e);
+    if (!moved && Math.abs(p.x - p0.x) + Math.abs(p.y - p0.y) < 4) return;
+    if (!moved) {
+      moved = true;
+      roll.append(box);
+      Object.assign(daw, { tray: null, note: null, bars: null });
+      daw.sel.clear();
+      closeAskDaw();
+      refreshDawSelection();
+      for (const b of roll.querySelectorAll(".picked")) b.classList.remove("picked");
+    }
+    const x0 = Math.max(DAW_LEFT, Math.min(p0.x, p.x)), x1 = Math.max(p0.x, p.x);
+    const y0 = Math.max(0, Math.min(p0.y, p.y)), y1 = Math.min(roll.offsetHeight, Math.max(p0.y, p.y));
+    Object.assign(box.style, { left: x0 + "px", width: x1 - x0 + "px", top: y0 + "px", height: y1 - y0 + "px" });
+    daw.marked = new Set(before);
+    for (const b of boxes) {
+      if (b.offsetLeft < x1 && b.offsetLeft + b.offsetWidth > x0 && b.offsetTop < y1 && b.offsetTop + b.offsetHeight > y0) daw.marked.add(`${b.dataset.voice}:${b.dataset.u0}`);
+    }
+    for (const b of boxes) b.classList.toggle("marked", daw.marked.has(`${b.dataset.voice}:${b.dataset.u0}`));
+    $("daw-info").textContent = `${daw.marked.size} nota seçili`;
+  };
+  // Near the edges the view follows the band.
+  const follow = setInterval(() => {
+    if (!moved) return;
+    const r = scroll.getBoundingClientRect();
+    const by = last.clientX > r.right - 30 ? 20 : last.clientX < r.left + DAW_LEFT + 20 ? -20 : 0;
+    if (by) { scroll.scrollLeft += by; move(last); }
+  }, 40);
+  const up = () => {
+    clearInterval(follow);
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    box.remove();
+    if (moved) { renderDaw(); return; }
+    if (daw.sel.size || daw.marked.size || daw.tray != null || daw.note || daw.bars) {
+      Object.assign(daw, { tray: null, note: null, bars: null });
+      daw.sel.clear();
+      daw.marked.clear();
+      renderDaw();
+    }
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
+
+// The picked notes by voice ({ vocal: [u0], ins: [u0] }): the rubber band's, else the one clicked.
+function markedPick() {
+  const pick = { vocal: [], ins: [] };
+  for (const key of daw.marked) { const [voice, u0] = key.split(":"); pick[voice].push(Number(u0)); }
+  if (!daw.marked.size && daw.note) {
+    const item = daw.tl[daw.note.voice].find((n) => n.bar === daw.note.bar && n.k === daw.note.k);
+    if (item) pick[item.voice].push(item.u0);
+  }
+  return pick;
+}
+
+// The syllables on the picked vocal notes, for pasting them with the notes: { text, notes } with
+// the note of every syllable as its place among the clip's vocal notes. Whole stretches of the
+// lyrics keep their line breaks and section tags.
+function clipLyrics(pick) {
+  const vocal = daw.tl.vocal.filter((n) => pick.vocal.includes(n.u0)).map((n) => n.number);
+  const gs = daw.map.map((m, g) => (m != null && vocal.includes(m) ? g : -1)).filter((g) => g >= 0);
+  if (!gs.length) return null;
+  const sylls = daw.sylls, last = gs[gs.length - 1];
+  const text = last - gs[0] + 1 === gs.length
+    ? daw.lyrics.slice(sylls[gs[0]].from, sylls[last].to)
+    : gs.map((g, k) => sylls[g].text + (sylls[g].joined && gs[k + 1] === g + 1 ? "" : " ")).join("");
+  return { text: text.trim(), notes: gs.map((g) => vocal.indexOf(daw.map[g])) };
+}
+
+function makeClip(pick) {
+  const clip = ScoreModel.clipNotes(daw.model, pick);
+  if (clip) clip.lyrics = clipLyrics(pick);
+  return clip;
+}
+
+function copyDawNotes() {
+  const clip = makeClip(markedPick());
+  if (!clip) return false;
+  dawClip = clip;
+  const count = clip.vocal.length + clip.ins.length;
+  dawMsg(`${count} nota${clip.lyrics ? " (sözleriyle)" : ""} kopyalandı. Sarı çizgiyi yapıştıracağın yere çek, ⌘V (ya da sağ tık → Yapıştır).`);
+  return true;
+}
+
+// Delete (or cut): rests take the notes' places, nothing else moves; the syllables on them go out
+// of the lyrics too (a cut keeps them to paste).
+function deleteDawNotes(cut) {
+  const pick = markedPick();
+  const count = pick.vocal.length + pick.ins.length;
+  if (!count || scoreLocked()) return;
+  try {
+    if (cut) dawClip = makeClip(pick);
+    const model = ScoreModel.removeNotes(ScoreModel.removeNotes(daw.model, "vocal", pick.vocal), "ins", pick.ins);
+    const gone = daw.tl.vocal.filter((n) => pick.vocal.includes(n.u0)).map((n) => n.number);
+    let next = { lyrics: daw.lyrics, map: daw.map };
+    const words = daw.map.map((m, g) => (m != null && gone.includes(m) ? g : -1)).filter((g) => g >= 0);
+    for (const g of [...words].reverse()) next = LyricsLayout.editSyllable(next.lyrics, next.map, g, "", dawCount());
+    // Lines left with nothing on them go, and the spaces left where the syllables were.
+    const lyrics = words.length
+      ? next.lyrics.replace(/^[ \t]+$\n?/gm, "").replace(/^[ \t]+|[ \t]+$/gm, "").replace(/(\S)[ \t]{2,}(?=\S)/g, "$1 ")
+      : daw.lyrics;
+    const map = next.map.map((m) => (m == null ? null : m - gone.filter((x) => x < m).length));
+    daw.marked.clear();
+    dawScore(model, null, null, map, lyrics);
+    const said = $("daw-msg").textContent;
+    dawMsg(`${count} nota${words.length ? ` ve üzerlerindeki ${words.length} hece` : ""} ${cut ? "kesildi; sarı çizgiyi yapıştıracağın yere çek, ⌘V" : "silindi"} (geri alınabilir).${said ? " " + said : ""}`);
+  } catch (error) { dawMsg(error.message); }
+}
+
+// A length as whole bars when it is one ("2 ölçü"), else as a note value.
+function spanText(units) {
+  const bar = daw.tl.bars[0] && daw.tl.bars[0].units;
+  if (!bar || units < bar) return durationText(units);
+  const rest = units % bar;
+  return `${Math.floor(units / bar)} ölçü${rest ? " + " + durationText(rest) : ""}`;
+}
+
+// Paste where the playhead is. When the clip carries syllables the editor asks whether they come
+// along; without them the notes go in with no syllables.
+function pasteDawNotes() {
+  if (!dawClip) { dawMsg("Yapıştırılacak nota yok: önce melodide boş yerden sürükleyerek notaları seç, ⌘C ya da ⌘X."); return; }
+  if (scoreLocked()) return;
+  const step = stepUnits();
+  const bar = daw.tl.bars[barAt(daw.pos)];
+  let u = unitOfTime(daw.pos);
+  // On a note start the playhead was snapped to; elsewhere on the step grid.
+  const start = [...daw.tl.vocal, ...daw.tl.ins].find((n) => Math.abs(n.u0 - u) < 1e-6);
+  u = start ? start.u0 : Math.min(bar.u1, bar.u0 + Math.round((u - bar.u0) / step) * step);
+  const clip = dawClip;
+  if (!clip.lyrics) { pasteClip(clip, u, false); return; }
+  const words = clip.lyrics.text.length > 40 ? clip.lyrics.text.slice(0, 40).trim() + "…" : clip.lyrics.text;
+  askDaw({ t0: u * daw.tl.perUnit }, `Kopyalanan notaların sözleri de var («${words.replace(/\s+/g, " ")}»). Sözleriyle birlikte yapıştırayım mı?`, [
+    { label: "Evet, sözleriyle", key: "Enter", run: () => pasteClip(clip, u, true) },
+    { label: "Hayır, sözsüz", key: "Escape", run: () => pasteClip(clip, u, false) },
+  ]);
+}
+
+function pasteClip(clip, u, withLyrics) {
+  try {
+    const result = ScoreModel.pasteNotes(daw.model, u, clip);
+    const after = daw.tl.vocal.find((n) => n.u0 >= result.at);
+    const from = after ? after.number : daw.tl.vocal.length, added = clip.vocal.length;
+    let next = { lyrics: daw.lyrics, map: daw.map.map((m) => (m == null || m < from ? m : m + added)) };
+    if (withLyrics) next = LyricsLayout.insertSyllables(next.lyrics, next.map, clip.lyrics.text, clip.lyrics.notes.map((k) => from + k));
+    Object.assign(daw, { note: null, tray: null, bars: null });
+    daw.sel.clear();
+    daw.marked = new Set(["vocal", "ins"].flatMap((voice) => clip[voice].map((c) => `${voice}:${result.at + c.off}`)));
+    dawScore(result.model, null, null, next.map, next.lyrics);
+    // The playhead goes to the end of what was pasted: ⌘V again puts the next copy after it.
+    dawSeek((result.at + clip.length) * daw.tl.perUnit);
+    const count = clip.vocal.length + clip.ins.length;
+    if (!$("daw-msg").textContent) {
+      dawMsg(`${count} nota${withLyrics ? " sözleriyle" : clip.lyrics ? " sözsüz" : ""} yapıştırıldı; devamındaki notalar${added && after ? " ve sözleri" : ""} ${spanText(clip.length)} ileri ötelendi.`);
+    }
+  } catch (error) { dawMsg(error.message); }
+}
+
+// The bars the picked notes are in: [from, to].
+function markedBars() {
+  const pick = markedPick();
+  const items = ["vocal", "ins"].flatMap((voice) => daw.tl[voice].filter((n) => pick[voice].includes(n.u0)));
+  if (!items.length) return null;
+  const u0 = Math.min(...items.map((n) => n.u0)), u1 = Math.max(...items.map((n) => n.u1));
+  const bars = daw.tl.bars;
+  return [bars.findIndex((b) => u0 < b.u1), bars.findIndex((b) => u1 <= b.u1)];
+}
+
+// The picked notes' bars as one section of the score (intro, verse, chorus …); the syllables sung
+// there become a lyric section of that name too, since the arrangement names sections after the lyrics.
+function assignDawSection(label) {
+  const range = markedBars();
+  if (!range || scoreLocked()) return;
+  const [from, to] = range, { bars } = daw.tl;
+  const sung = daw.map.map((m, g) => (m != null && daw.tl.vocal[m].u0 >= bars[from].u0 && daw.tl.vocal[m].u0 < bars[to].u1 ? g : -1)).filter((g) => g >= 0);
+  const tag = Arrange.tagText(label);
+  const lyrics = sung.length ? LyricsLayout.retag(daw.lyrics, sung[0], sung[sung.length - 1], tag) : null;
+  try {
+    dawScore(ScoreModel.setSection(daw.model, from, to, label), null, null, daw.map, lyrics);
+    dawMsg(`${from === to ? `Ölçü ${from + 1}` : `Ölçü ${from + 1}–${to + 1}`} artık ${label}${sung.length ? `; üzerindeki sözler de [${tag}] bölümü oldu` : ""} (geri alınabilir).`);
+  } catch (error) { dawMsg(error.message); }
+}
+
+// Dragging the playhead (by the ruler or its grip): it sticks to note starts near the pointer.
+function dragPlayhead(event) {
+  const wasPlaying = daw.playing;
+  if (wasPlaying) dawPause();
+  const to = (e) => {
+    const t = Math.max(0, Math.min(daw.tl.duration, timeAt(e.clientX)));
+    let best = null;
+    for (const n of [...daw.tl.vocal, ...daw.tl.ins]) if (Math.abs(n.t0 - t) * daw.pps < 8 && (!best || Math.abs(n.t0 - t) < Math.abs(best.t0 - t))) best = n;
+    return best ? best.t0 : t;
+  };
+  dawSeek(to(event));
+  const move = (e) => { dawSeek(to(e)); };
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    if (wasPlaying) dawPlay();
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
+
+function closeDawMenu() {
+  for (const menu of document.querySelectorAll(".daw-menu")) menu.remove();
+}
+
+// Right click in the melody lane: cut, copy, paste, delete.
+function openDawMenu(event) {
+  closeDawMenu();
+  const noteBox = event.target.closest(".daw-note, .daw-ins");
+  if (noteBox && !daw.marked.has(`${noteBox.dataset.voice}:${noteBox.dataset.u0}`)) {
+    Object.assign(daw, { note: null, tray: null, bars: null });
+    daw.sel.clear();
+    daw.marked = new Set([`${noteBox.dataset.voice}:${noteBox.dataset.u0}`]);
+    renderDaw();
+  }
+  const pick = markedPick(), has = pick.vocal.length + pick.ins.length > 0;
+  const menu = el("div", "menu daw-menu");
+  menu.setAttribute("role", "menu");
+  menu.addEventListener("click", (e) => e.stopPropagation());   // the page's menus close on any click
+  const item = (label, key, on, run, extra = "") => {
+    const button = el("button", "menu-item" + extra);
+    button.type = "button";
+    button.disabled = !on;
+    button.append(el("span", null, null, label), el("span", "daw-menu-key", null, key));
+    button.addEventListener("click", () => {
+      if (run === sectionList) { sectionList(); return; }
+      closeDawMenu();
+      $("daw-scroll").focus({ preventScroll: true });   // the keys (⌘Z, ⌘V …) keep working
+      run();
+    });
+    return button;
+  };
+  // The section names, in place of the menu's items.
+  const range = has && markedBars();
+  function sectionList() {
+    const [from, to] = range;
+    menu.replaceChildren(el("div", "menu-label", null, from === to ? `Ölçü ${from + 1} bölümü` : `Ölçü ${from + 1}–${to + 1} bölümü`),
+      ...[...$("daw-label-name").options].map((o) => item(o.textContent, "", true, () => assignDawSection(o.value))));
+    place();
+  }
+  menu.append(
+    item("Kes", "⌘X", has, () => deleteDawNotes(true)),
+    item("Kopyala", "⌘C", has, copyDawNotes),
+    item("Yapıştır (sarı çizgiye)", "⌘V", !!dawClip, pasteDawNotes),
+    item("Sil", "⌫", has, () => deleteDawNotes(false), " danger"),
+    el("div", "menu-divider"),
+    item("Bölüm ata (verse, chorus …)", "▸", !!range, sectionList),
+  );
+  const host = $("daw").getBoundingClientRect();
+  $("daw").append(menu);
+  function place() {
+    const x = Math.min(event.clientX, host.right - menu.offsetWidth - 8), y = Math.min(event.clientY, host.bottom - menu.offsetHeight - 8);
+    Object.assign(menu.style, { left: x - host.left + "px", top: y - host.top + "px", right: "auto" });
+  }
+  place();
 }
 
 // Painting a track's bars: a drag adds (or, started on a painted bar, removes) the bars it crosses;
@@ -1174,12 +1471,15 @@ function paintTrack(event, k) {
 
 $("daw-scroll").addEventListener("pointerdown", (event) => {
   const target = event.target;
+  closeDawMenu();
+  if (event.button !== 0) return;   // a right click opens the menu
   if (target.closest(".daw-ask")) return;   // its buttons answer on click
+  if (target.closest(".daw-playhead-grip")) { dragPlayhead(event); return; }
   if (target.closest(".daw-track-add")) { addTrack(); return; }
   const trackLabel = target.closest(".daw-track-label");
   if (trackLabel) { openTrackEditor(Number(trackLabel.closest(".daw-track").dataset.track), trackLabel); return; }
   if (target.closest(".daw-label")) return;
-  if (target.closest(".daw-ruler")) { dawSeek(timeAt(event.clientX)); return; }
+  if (target.closest(".daw-ruler")) { dragPlayhead(event); return; }
   const trackRow = target.closest(".daw-track");
   if (trackRow) { paintTrack(event, Number(trackRow.dataset.track)); return; }
   if (target.closest(".daw-tracks-head")) return;
@@ -1206,6 +1506,7 @@ $("daw-scroll").addEventListener("pointerdown", (event) => {
     };
     daw.note = null;
     daw.sel.clear();
+    daw.marked.clear();
     daw.tray = null;
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -1226,6 +1527,7 @@ $("daw-scroll").addEventListener("pointerdown", (event) => {
   if (lyricBlock) {
     const k = Number(lyricBlock.dataset.section);
     Object.assign(daw, { tray: null, note: null, bars: null });
+    daw.marked.clear();
     daw.sel = new Set(daw.sylls.filter((s) => s.section === k).map((s) => s.index));
     daw.anchor = [...daw.sel][0] ?? null;
     renderDaw();
@@ -1244,12 +1546,30 @@ $("daw-scroll").addEventListener("pointerdown", (event) => {
     }
     const { voice } = noteBox.dataset, bar = Number(noteBox.dataset.bar), k = Number(noteBox.dataset.k);
     const item = [...daw.tl[voice], ...daw.tl.rests[voice]].find((x) => x.bar === bar && x.k === k);
+    if (item && item.midi != null && (event.metaKey || event.ctrlKey)) {
+      // ⌘/Ctrl+click: the note in or out of the picked notes (the clicked one comes along).
+      if (daw.note && !daw.marked.size) { const p = markedPick(); for (const v of ["vocal", "ins"]) for (const u of p[v]) daw.marked.add(`${v}:${u}`); }
+      const key = noteKey(item);
+      if (daw.marked.has(key)) daw.marked.delete(key); else daw.marked.add(key);
+      Object.assign(daw, { note: null, tray: null, bars: null });
+      daw.sel.clear();
+      renderDaw();
+      return;
+    }
     if (item && item.midi != null) dragNote(event, noteBox, item);
     else if (item) pickDawNote(item);
     return;
   }
+  if (target.closest(".daw-roll")) { marqueeNotes(event); return; }
   marquee(event);
 });
+
+$("daw-scroll").addEventListener("contextmenu", (event) => {
+  if (!event.target.closest(".daw-roll") || event.target.closest(".daw-label, .daw-ask")) return;
+  event.preventDefault();
+  openDawMenu(event);
+});
+$("daw-scroll").addEventListener("scroll", closeDawMenu);
 
 $("daw-scroll").addEventListener("dblclick", (event) => {
   if (event.target.closest(".daw-ask")) return;
@@ -1312,19 +1632,31 @@ $("daw").addEventListener("keydown", (event) => {
     if (choice) choice.run();
     return;
   }
-  if (event.key === "Escape" && (daw.sel.size || daw.tray != null || daw.note || daw.bars || daw.trackOpen != null)) {
+  if (event.key === "Escape" && document.querySelector(".daw-menu")) { event.preventDefault(); closeDawMenu(); return; }
+  if (mod && !event.shiftKey && !event.altKey) {
+    const key = event.key.toLowerCase();
+    const notes = daw.marked.size || (daw.note && dawPicked() && !dawPicked().rest);
+    if (key === "c" && notes) { event.preventDefault(); copyDawNotes(); return; }
+    if (key === "x" && notes) { event.preventDefault(); deleteDawNotes(true); return; }
+    if (key === "v") { event.preventDefault(); pasteDawNotes(); return; }
+  }
+  if ((event.key === "Delete" || event.key === "Backspace") && daw.marked.size) { event.preventDefault(); deleteDawNotes(false); return; }
+  if (event.key === "Escape" && (daw.sel.size || daw.marked.size || daw.tray != null || daw.note || daw.bars || daw.trackOpen != null)) {
     event.preventDefault();
     closeTrackEditor();
     Object.assign(daw, { tray: null, note: null, bars: null });
     daw.sel.clear();
+    daw.marked.clear();
     renderDaw();
     return;
   }
   if (daw.note) {
+    if (mod) return;
     const name = {
       ArrowUp: event.shiftKey ? "octave-up" : "up", ArrowDown: event.shiftKey ? "octave-down" : "down",
       ArrowLeft: event.altKey ? "shift-back" : "prev", ArrowRight: event.altKey ? "shift-on" : "next", "+": "longer", "=": "longer", "-": "shorter",
       Delete: "rest", Backspace: "rest", n: "note", N: "note", i: "insert", I: "insert",
+      a: "longer", A: "longer", s: "shorter", S: "shorter", d: "shift-back", D: "shift-back", f: "shift-on", F: "shift-on",
     }[event.key];
     if (name) { event.preventDefault(); dawNoteAction(name); }
     return;
@@ -1393,6 +1725,7 @@ $("daw-undo").addEventListener("click", () => {
   const lyricsChanged = last.lyrics !== daw.lyrics;
   Object.assign(daw, last);
   daw.sel.clear();
+  daw.marked.clear();
   closeTrackEditor();
   renderDaw();
   if (lyricsChanged) renderDawWords();

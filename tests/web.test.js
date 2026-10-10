@@ -240,6 +240,51 @@ test("shiftFrom, resizeNote and insertBefore keep every note and move what follo
   assert.deepStrictEqual(added.sel, { bar: 0, note: 1 });
 });
 
+test("removeNotes, clipNotes and pasteNotes: delete, copy and paste making room", () => {
+  const model = ScoreModel.parse(ABC);
+  // Intro: c8d8e8z8|g16e16| at units 0, 8, 16, 32, 48.
+  const gone = ScoreModel.removeNotes(model, "vocal", [8, 16]);
+  assert.strictEqual(gone.bars[0].vocal, "c8z24");
+  assert.strictEqual(gone.bars[1].vocal, "g16e16", "the rest stays where it was");
+  const clip = ScoreModel.clipNotes(model, { vocal: [8, 16] });
+  assert.deepStrictEqual(clip, { length: 16, vocal: [{ off: 0, dur: 8, midi: 74 }, { off: 8, dur: 8, midi: 76 }], ins: [] });
+  // Pasted inside c (unit 4): the clip goes in front of it, everything (Ins too) moves 16 on.
+  const pasted = ScoreModel.pasteNotes(model, 4, clip);
+  assert.strictEqual(pasted.at, 0);
+  assert.strictEqual(pasted.model.bars[0].vocal, "d8e8c8d8");
+  assert.strictEqual(pasted.model.bars[1].vocal, "e8z8g16");
+  const insBefore = ScoreModel.voiceLine(model, "ins").notes, insAfter = ScoreModel.voiceLine(pasted.model, "ins").notes;
+  assert.deepStrictEqual(insAfter.map((n) => n.u0), insBefore.map((n) => n.u0 + 16));
+  assert.strictEqual(pasted.model.bars.length, model.bars.length + 1, "a bar added at the end for what was pushed past it");
+  // Across voices: a clip keeps the distance between its Vocal and Ins notes.
+  const both = ScoreModel.clipNotes(model, { vocal: [0], ins: [ScoreModel.voiceLine(model, "ins").notes[0].u0] });
+  assert.ok(both.length > 32 && both.vocal.length === 1 && both.ins.length === 1 && both.ins[0].off > 0);
+  assert.strictEqual(ScoreModel.clipNotes(model, { vocal: [3] }), null);
+});
+
+test("insertSyllables puts pasted lyrics where their notes went; retag makes syllables a section", () => {
+  const lyrics = "[Verse]\nbir iki üç\ndört beş\n[Chorus]\naltı yedi";   // 10 syllables on notes 0-9
+  const map = [...Array(10).keys()];
+  const shifted = (from, by) => map.map((m) => (m >= from ? m + by : m));
+  // Inside a line, in front of the note it went before.
+  let out = LyricsLayout.insertSyllables(lyrics, shifted(3, 2), "gelir", [3, 4]);
+  assert.strictEqual(out.lyrics, "[Verse]\nbir iki gelir üç\ndört beş\n[Chorus]\naltı yedi");
+  assert.deepStrictEqual(out.map, [...Array(12).keys()]);
+  // Between two sections: at the end of the one before.
+  out = LyricsLayout.insertSyllables(lyrics, shifted(6, 2), "gelir", [6, 7]);
+  assert.strictEqual(out.lyrics, "[Verse]\nbir iki üç\ndört beş\ngelir\n[Chorus]\naltı yedi");
+  // At the start of a line: a line of its own.
+  out = LyricsLayout.insertSyllables(lyrics, shifted(4, 1), "son", [4]);
+  assert.strictEqual(out.lyrics, "[Verse]\nbir iki üç\nson\ndört beş\n[Chorus]\naltı yedi");
+
+  assert.strictEqual(LyricsLayout.retag(lyrics, 4, 7, "Bridge"), "[Verse]\nbir iki üç\n[Bridge]\ndört beş\naltı\n[Chorus]\nyedi");
+  assert.strictEqual(LyricsLayout.retag(lyrics, 3, 5, "Chorus"), "[Verse]\nbir iki\n[Chorus]\nüç\ndört beş\naltı yedi", "joins the chorus after it");
+  assert.strictEqual(LyricsLayout.retag(lyrics, 6, 7, "Verse"), "[Verse]\nbir iki üç\ndört beş\naltı\n[Chorus]\nyedi", "joins the verse before it");
+  assert.strictEqual(LyricsLayout.retag(lyrics, 0, 9, "Bridge"), "[Bridge]\nbir iki üç\ndört beş\naltı yedi");
+  assert.strictEqual(LyricsLayout.retag(lyrics, 1, 1, "Bridge"), "[Verse]\nbir\n[Bridge]\niki\n[Verse]\nüç\ndört beş\n[Chorus]\naltı yedi", "widened to the whole word");
+  for (const [a, b] of [[4, 7], [3, 5], [0, 9], [1, 1]]) assert.strictEqual(LyricsLayout.allSyllables(LyricsLayout.retag(lyrics, a, b, "X")).length, 10);
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
   try { fn(); console.log("ok  ", name); } catch (error) { failed++; console.log("FAIL", name, "\n   ", error.message); }

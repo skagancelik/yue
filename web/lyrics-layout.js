@@ -345,7 +345,88 @@ const LyricsLayout = (() => {
     return { lyrics: next, map: out.concat(after) };
   }
 
-  return { syllables, sectionName, lyricSections, allSyllables, noteSlots, normalize, isEmpty, compact, layOut, toMap, checkMap, moveSyllables, placeSyllable, editSyllable };
+  // Lyrics `text` put in where note `notes[0]` is sung: after the syllables on notes before it (at
+  // the end of their section when the next syllable starts another one, on a line of its own when
+  // the next one starts a line). Its syllables go on `notes` in order (null for any more there are).
+  // `map` must already count the new notes. Returns { lyrics, map }.
+  function insertSyllables(lyrics, map, text, notes) {
+    const syls = allSyllables(lyrics);
+    const n = notes.find((x) => x != null);
+    let i = 0;
+    map.forEach((m, g) => { if (m != null && m < n) i = g + 1; });
+    const prev = syls[i - 1], next = syls[i];
+    const lineStart = (pos) => lyrics.lastIndexOf("\n", pos - 1) + 1;
+    let pos, piece;
+    if (next && (!prev || prev.section === next.section)) {
+      const start = lineStart(next.from);
+      if (![...lyrics.slice(start, next.from)].some(isLetter)) { pos = start; piece = text + "\n"; }
+      else { pos = next.from; piece = (/\s/.test(lyrics[pos - 1]) ? "" : " ") + text + " "; }
+    } else if (prev) {
+      pos = prev.to;
+      piece = "\n" + text;
+    } else {
+      pos = lyrics.length;
+      piece = (lyrics.trim() ? "\n" : "") + text;
+    }
+    const out = lyrics.slice(0, pos) + piece + lyrics.slice(pos);
+    const added = allSyllables(out).length - syls.length;
+    const put = Array.from({ length: Math.max(0, added) }, (_, k) => notes[k] ?? null);
+    return { lyrics: out, map: [...map.slice(0, i), ...put, ...map.slice(i)] };
+  }
+
+  // Syllables first..last (widened to whole words) made one lyric section tagged `tag`: tags inside
+  // go, the section they start in is split before them (or retagged when they start it) and the
+  // one they end in goes on after them under its old tag. Syllables stay where they are.
+  function retag(lyrics, first, last, tag) {
+    const syls = allSyllables(lyrics);
+    if (!syls[first] || !syls[last]) return lyrics;
+    const sections = lyricSections(lyrics);
+    let a = first, z = last;
+    while (a > 0 && syls[a - 1].joined) a--;
+    while (z < syls.length - 1 && syls[z].joined) z++;
+    const start = syls[a].from, end = syls[z].to;
+    const tags = [];
+    let offset = 0;
+    for (const line of lyrics.split("\n")) {
+      if (/^\s*\[[^\]]+\]\s*$/.test(line)) tags.push({ from: offset, to: Math.min(lyrics.length, offset + line.length + 1) });
+      offset += line.length + 1;
+    }
+    const edits = [];   // [from, to, text]
+    const after = syls[z + 1];
+    // Spaces next to a line break that is put in go.
+    const spacesAfter = (pos) => { while (pos < lyrics.length && /[ \t]/.test(lyrics[pos])) pos++; return pos; };
+    const spacesBefore = (pos) => { while (pos > 0 && /[ \t]/.test(lyrics[pos - 1])) pos--; return pos; };
+    // A section next to them with the same name becomes one with them.
+    const same = (k) => k != null && sectionName(sections[k].tag) === sectionName(tag);
+    const tagBetween = (from, to) => tags.filter((t) => t.from >= from && t.from < to).pop();
+    if (after && after.section === syls[z].section) {
+      const old = sections[syls[z].section].tag;
+      if (old && !same(after.section)) {
+        const to = spacesAfter(end);
+        edits.push([end, to, lyrics[to] === "\n" ? `\n[${old}]` : `\n[${old}]\n`]);
+      }
+    } else if (after && same(after.section)) {
+      const t = tagBetween(end, after.from);
+      if (t) edits.push([t.from, t.to, ""]);
+    }
+    for (const t of tags) if (t.from > start && t.from < end) edits.push([t.from, t.to, ""]);
+    const lineStart = lyrics.lastIndexOf("\n", start - 1) + 1;
+    const before = syls[a - 1];
+    if (!before || before.section !== syls[a].section) {
+      const own = tagBetween(before ? before.to : 0, start);
+      if (before && same(before.section)) { if (own) edits.push([own.from, own.to, ""]); }
+      else if (own) edits.push([own.from, own.to, `[${tag}]\n`]);
+      else edits.push([lineStart, lineStart, `[${tag}]\n`]);
+    } else if (!same(syls[a].section)) {
+      if (![...lyrics.slice(lineStart, start)].some(isLetter)) edits.push([lineStart, lineStart, `[${tag}]\n`]);
+      else edits.push([spacesBefore(start), start, `\n[${tag}]\n`]);
+    }
+    let out = lyrics;
+    for (const [from, to, text] of edits.sort((x, y) => y[0] - x[0])) out = out.slice(0, from) + text + out.slice(to);
+    return out;
+  }
+
+  return { syllables, sectionName, lyricSections, allSyllables, noteSlots, normalize, isEmpty, compact, layOut, toMap, checkMap, moveSyllables, placeSyllable, editSyllable, insertSyllables, retag };
 })();
 
 if (typeof module !== "undefined") module.exports = LyricsLayout;
