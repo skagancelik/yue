@@ -726,13 +726,42 @@ const ScoreModel = (() => {
     return { model: out, at };
   }
 
+  // The notes starting on the units in `pick` ({ vocal: [u0], ins: [u0] }) moved `by` units and
+  // `semitones` up, each in its voice. They overwrite what they land on: a note they cover goes, one
+  // they cover part of keeps the rest. Returns { model, overwritten } (notes cut or gone).
+  function moveNotes(model, pick, by, semitones = 0) {
+    let out = model, overwritten = 0;
+    for (const voice of VOICES) {
+      const want = new Set(pick[voice] || []);
+      if (!want.size) continue;
+      const { notes } = voiceLine(out, voice);
+      const moved = notes.filter((n) => want.has(n.u0)).map((n) => ({ u0: n.u0 + by, dur: n.dur, midi: n.midi + semitones }));
+      if (moved.some((n) => n.u0 < 0)) throw new Error("Notalar şarkının başından önceye gidemez");
+      let rest = notes.filter((n) => !want.has(n.u0));
+      for (const m of moved) {
+        const a = m.u0, b = m.u0 + m.dur;
+        rest = rest.flatMap((n) => {
+          const s = n.u0, e = n.u0 + n.dur;
+          if (e <= a || s >= b) return [n];
+          overwritten++;
+          const parts = [];
+          if (s < a) parts.push({ ...n, dur: a - s });
+          if (e > b) parts.push({ ...n, u0: b, dur: e - b });
+          return parts;
+        });
+      }
+      out = writeLine(out, voice, [...rest, ...moved]);
+    }
+    return { model: out, overwritten };
+  }
+
   // MIDI pitch as a name for the status line: "F#4", "Bb3".
   function pitchName(note) {
     return note.rest ? "sus" : note.letter + ({ 2: "𝄪", 1: "♯", 0: "", "-1": "♭", "-2": "𝄫" })[note.alter] + note.octave;
   }
 
   return { parse, serialize, sections, sectionOf, setSection, swapVoices, tieSafeRange,
-    voiceNotes, editNote, moveNote, voiceLine, writeLine, shiftFrom, resizeNote, insertBefore, removeNotes, clipNotes, pasteNotes, writeBar, pitchName, unitDenominator: (m) => Number((headerField(m, "L").split("/")[1]) || 8) };
+    voiceNotes, editNote, moveNote, voiceLine, writeLine, shiftFrom, resizeNote, insertBefore, removeNotes, clipNotes, pasteNotes, moveNotes, writeBar, pitchName, unitDenominator: (m) => Number((headerField(m, "L").split("/")[1]) || 8) };
 })();
 
 if (typeof module !== "undefined") module.exports = ScoreModel;

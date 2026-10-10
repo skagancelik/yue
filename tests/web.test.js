@@ -285,6 +285,22 @@ test("insertSyllables puts pasted lyrics where their notes went; retag makes syl
   for (const [a, b] of [[4, 7], [3, 5], [0, 9], [1, 1]]) assert.strictEqual(LyricsLayout.allSyllables(LyricsLayout.retag(lyrics, a, b, "X")).length, 10);
 });
 
+test("moveNotes moves picked notes in time and pitch and overwrites what they land on", () => {
+  const model = ScoreModel.parse(ABC);
+  // Intro: c8d8e8z8|g16e16| at units 0, 8, 16, 32, 48.
+  const later = ScoreModel.moveNotes(model, { vocal: [0, 8] }, 4);
+  assert.strictEqual(later.model.bars[0].vocal, "z4c8d8e4z8", "e is cut where d now ends");
+  assert.strictEqual(later.overwritten, 1);
+  const up = ScoreModel.moveNotes(model, { vocal: [8] }, 0, 2);
+  assert.strictEqual(up.model.bars[0].vocal, "c8e8e8z8");
+  assert.strictEqual(up.overwritten, 0);
+  const over = ScoreModel.moveNotes(model, { vocal: [16] }, -8);
+  assert.strictEqual(over.model.bars[0].vocal, "c8e8z16", "d is gone under e");
+  const tail = ScoreModel.moveNotes(model, { vocal: [16] }, -4);
+  assert.strictEqual(tail.model.bars[0].vocal, "c8d4e8z12", "d keeps the part before e");
+  assert.throws(() => ScoreModel.moveNotes(model, { vocal: [0] }, -1), /başından/);
+});
+
 let failed = 0;
 for (const [name, fn] of tests) {
   try { fn(); console.log("ok  ", name); } catch (error) { failed++; console.log("FAIL", name, "\n   ", error.message); }
