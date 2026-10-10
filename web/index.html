@@ -323,12 +323,12 @@
         <button type="button" class="btn ghost small" data-note="down" title="Yarım ses pes (↓)">♭ ↓</button>
         <button type="button" class="btn ghost small" data-note="octave-up" title="Bir oktav tiz (Shift+↑)">Oktav ↑</button>
         <button type="button" class="btn ghost small" data-note="octave-down" title="Bir oktav pes (Shift+↓)">Oktav ↓</button>
-        <button type="button" class="btn ghost small" data-note="longer" title="Uzat (+). Sözlü yerde devamı ileri kayar; sözsüz yerde sorar">Uzat +</button>
-        <button type="button" class="btn ghost small" data-note="shorter" title="Kısalt (−). Sözlü yerde devamı geri çekilir; sözsüz yerde sorar">Kısalt −</button>
+        <button type="button" class="btn ghost small" data-note="longer" title="Uzat (A ya da +). Sözlü yerde devamı ileri kayar; sözsüz yerde sorar">Uzat +</button>
+        <button type="button" class="btn ghost small" data-note="shorter" title="Kısalt (S ya da −). Sözlü yerde devamı geri çekilir; sözsüz yerde sorar">Kısalt −</button>
         <select id="daw-step" class="small-select" aria-label="Adım" title="Uzat/Kısalt/Ötele/Ekle adımı"></select>
         <span class="daw-tool-group" title="Bu nota ve şarkının devamındaki notalar (vokalde sözleriyle) birlikte kayar">
-          <button type="button" class="btn ghost small" data-note="shift-back" title="Bu notayı ve devamını bir adım geri ötele (Alt+←)">⇤ Ötele</button>
-          <button type="button" class="btn ghost small" data-note="shift-on" title="Bu notayı ve devamını bir adım ileri ötele (Alt+→); istediğin kadar bas">Ötele ⇥</button>
+          <button type="button" class="btn ghost small" data-note="shift-back" title="Bu notayı ve devamını bir adım geri ötele (D ya da Alt+←)">⇤ Ötele</button>
+          <button type="button" class="btn ghost small" data-note="shift-on" title="Bu notayı ve devamını bir adım ileri ötele (F ya da Alt+→); istediğin kadar bas">Ötele ⇥</button>
         </span>
         <button type="button" class="btn ghost small" data-note="insert" title="Önüne bir adım uzunluğunda yeni nota ekle; bu nota ve devamı ötelenir (I)">＋ Önüne nota</button>
         <button type="button" class="btn ghost small" data-note="rest" title="Notayı susa çevir (Delete)">Sus yap</button>
@@ -355,7 +355,7 @@
     </div>
     <div class="daw-body">
       <div class="daw-main">
-        <div id="daw-scroll" class="daw-scroll"></div>
+        <div id="daw-scroll" tabindex="-1" class="daw-scroll"></div>
         <div id="daw-tray" class="daw-tray hidden"></div>
       </div>
       <aside id="daw-side" class="daw-side">

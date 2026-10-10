@@ -682,13 +682,57 @@ const ScoreModel = (() => {
     return { model: out, sel: noteAt(out, voice, u0) };
   }
 
+  // The notes of `voice` starting on the units in `u0s` taken out; rests take their place.
+  function removeNotes(model, voice, u0s) {
+    const drop = new Set(u0s);
+    const { notes } = voiceLine(model, voice);
+    return writeLine(model, voice, notes.filter((n) => !drop.has(n.u0)));
+  }
+
+  // The notes of both voices starting on the units in `pick` ({ vocal: [u0], ins: [u0] }) as a clip:
+  // { length, vocal: [{ off, dur, midi }], ins: […] }, offsets from the first note's start and
+  // `length` up to the last note's end.
+  function clipNotes(model, pick) {
+    const taken = {};
+    for (const voice of VOICES) {
+      const want = new Set(pick[voice] || []);
+      taken[voice] = voiceLine(model, voice).notes.filter((n) => want.has(n.u0));
+    }
+    const all = [...taken.vocal, ...taken.ins];
+    if (!all.length) return null;
+    const from = Math.min(...all.map((n) => n.u0)), to = Math.max(...all.map((n) => n.u0 + n.dur));
+    const clip = { length: to - from };
+    for (const voice of VOICES) clip[voice] = taken[voice].map((n) => ({ off: n.u0 - from, dur: n.dur, midi: n.midi }));
+    return clip;
+  }
+
+  // A clip put in at unit `at`, its first note there, making room: everything from `at` on, in both
+  // voices, moves on by the clip's length. A note sounding across `at` moves on whole (the clip goes
+  // in front of it). Returns { model, at } (where the clip went in).
+  function pasteNotes(model, at, clip) {
+    const lines = {};
+    for (const voice of VOICES) lines[voice] = voiceLine(model, voice).notes;
+    for (;;) {
+      const across = [...lines.vocal, ...lines.ins].find((n) => n.u0 < at && at < n.u0 + n.dur);
+      if (!across) break;
+      at = across.u0;
+    }
+    let out = model;
+    for (const voice of VOICES) {
+      const next = lines[voice].map((n) => (n.u0 >= at ? { ...n, u0: n.u0 + clip.length } : n));
+      for (const c of clip[voice]) next.push({ u0: at + c.off, dur: c.dur, midi: c.midi });
+      out = writeLine(out, voice, next);
+    }
+    return { model: out, at };
+  }
+
   // MIDI pitch as a name for the status line: "F#4", "Bb3".
   function pitchName(note) {
     return note.rest ? "sus" : note.letter + ({ 2: "𝄪", 1: "♯", 0: "", "-1": "♭", "-2": "𝄫" })[note.alter] + note.octave;
   }
 
   return { parse, serialize, sections, sectionOf, setSection, swapVoices, tieSafeRange,
-    voiceNotes, editNote, moveNote, voiceLine, writeLine, shiftFrom, resizeNote, insertBefore, writeBar, pitchName, unitDenominator: (m) => Number((headerField(m, "L").split("/")[1]) || 8) };
+    voiceNotes, editNote, moveNote, voiceLine, writeLine, shiftFrom, resizeNote, insertBefore, removeNotes, clipNotes, pasteNotes, writeBar, pitchName, unitDenominator: (m) => Number((headerField(m, "L").split("/")[1]) || 8) };
 })();
 
 if (typeof module !== "undefined") module.exports = ScoreModel;
