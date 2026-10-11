@@ -863,15 +863,17 @@ function showYuePreview(compiled, title, unsaved) {
   // Besides these three the worker sends the planning mode (cot: "full" when the score carries
   // chords, else "melody"; see worker/agent.py) and the seed of each variant.
   const seed = $("seed").value === "" ? null : Number($("seed").value), variants = Number($("variants").value);
+  const cfg = $("cfg-scale").value === "" ? null : Number($("cfg-scale").value);
   const seeds = seed == null ? "rastgele" : variants === 2 ? `${seed} ve ${seed + 7919}` : String(seed);
   $("yp-request").replaceChildren(...[
     ["mod (cot)", compiled.cot === "full"
       ? `full: YuE2 bu melodiyi söyler/çalar, eşliği notadaki ${compiled.chords} akora göre çalar (enstrümanları stil belirler)`
       : "melody: YuE2 bu melodiyi söyler/çalar, eşliği (akorları, enstrümanları) kendisi uydurur"],
+    ["stile bağlılık (cfg_scale)", cfg == null ? "normal (YuE2 varsayılanı, 1.0)" : `${cfg}: stil ve söz daha sıkı uygulanır; üretim daha yavaş`],
     ["tohum (seed)", `${seeds}${variants === 2 ? " (2 varyasyon, her biri ayrı istek)" : ""}`],
     ["stil", `${compiled.style.length} karakter`], ["söz", `${compiled.lyrics.length} karakter`], ["nota", `${compiled.abc.split("\n").length} satır`],
   ].map(([k, v]) => { const row = document.createElement("div"); row.append(Object.assign(document.createElement("b"), { textContent: `${k}: ` }), v); return row; }));
-  previewRequest = { style: compiled.style, lyrics: compiled.lyrics, abc: compiled.abc, cot: compiled.cot, seed };
+  previewRequest = { style: compiled.style, lyrics: compiled.lyrics, abc: compiled.abc, cot: compiled.cot, seed, ...(cfg == null ? {} : { cfg_scale: cfg }) };
   $("yp-copied").textContent = "";
   $("yp-json").classList.add("hidden");
   $("yp-note").textContent = (compiled.style.length > 2000 ? "⚠ Stil 2000 karakterden uzun; kısaltman gerekir. " : "")
@@ -913,6 +915,7 @@ $("create").addEventListener("click", async () => {
       variants: Number($("variants").value), seed, stems: $("auto-stems").checked,
       stop_gpu: $("stop-gpu").checked,
     };
+    if ($("cfg-scale").value !== "") body.cfg_scale = Number($("cfg-scale").value);
     if (source.id) body.source_id = source.id;
     else { body.upload_key = source.key; body.source_name = source.name; }
     // An eser tasarımı: its score sent prepared (lyrics laid on it, unsung bars to the instrument,
@@ -1213,7 +1216,7 @@ function fillJob(node, job) {
   error.textContent = job.error || "";
   const from = job.design_name ? ` · 🎼 eser tasarımı «${job.design_name}»${job.cot === "full" ? " · akorlarıyla" : ""}`
     : { prepared: " · 🎛 hazırlanmış nota", edited: " · 🎼 düzeltilmiş nota", transcript: " · 🎼 çıkarılmış nota" }[job.score_from] || (job.status ? " · 🎧 ses kaydından" : "");
-  node.querySelector(".meta").textContent = fmtAgo(job.created_at) + from;
+  node.querySelector(".meta").textContent = fmtAgo(job.created_at) + from + (job.cfg_scale ? ` · stile bağlılık ${job.cfg_scale}` : "");
   node.querySelector(".rename").onclick = async () => {
     const title = prompt("Şarkı adı", job.title);
     if (!title || !title.trim() || title.trim() === job.title) return;
@@ -1632,6 +1635,7 @@ function reuse(job) {
   $("title").value = job.title;
   $("style").value = job.style_base || job.style;
   $("lyrics").value = job.lyrics;
+  $("cfg-scale").value = job.cfg_scale ? String(job.cfg_scale) : "";
   // What was sent is the compiled lyrics; a design laid out in the timeline keeps the editor's.
   if (design && editorLyrics(design)) $("lyrics").value = editorLyrics(design);
   updateCreate();
