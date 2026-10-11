@@ -238,6 +238,7 @@ def public_job(job):
         "created_at", "started_at", "finished_at", "duration", "source_name", "tokens", "variant",
         "upload_key", "folder_id", "source_id", "stems_status", "stems_message", "stems_error", "lyrics_start", "lyrics_layout",
         "style_base", "design_id", "design_name")}
+    out["cot"] = job.get("cot") or ("melody" if job.get("score_key") else None)
     # Where the score YuE2 got came from: "prepared" (laid out in the timeline and converted by the
     # browser), "edited" (the source's corrected score), "transcript" (the source's saved transcription),
     # or none (the recording was transcribed in the job). Older jobs with a score only had edited ones.
@@ -363,6 +364,13 @@ def create_jobs(body):
     variants = body.get("variants", 1)
     if variants not in (1, 2):
         raise HttpError(400, "variants 1 veya 2 olmalı")
+    # The planning mode YuE2 gets with the score: "full" when the score carries chords to play to,
+    # "melody" when it is the melody alone (the accompaniment is YuE2's own).
+    cot = body.get("cot", "melody")
+    if cot not in ("melody", "full"):
+        raise HttpError(400, "cot melody ya da full olmalı")
+    if cot == "full" and score_text is None and not score_key:
+        raise HttpError(400, "cot=full yalnızca bir notayla (eser tasarımı) kullanılabilir")
     seed = body.get("seed")
     if seed is None:
         seed = int.from_bytes(os.urandom(4), "big") & 0x7FFFFFFF
@@ -394,6 +402,8 @@ def create_jobs(body):
             else:
                 s3.copy_object(Bucket=BUCKET, Key=job["score_key"], CopySource={"Bucket": BUCKET, "Key": score_key},
                                ContentType="text/plain; charset=utf-8", MetadataDirective="REPLACE")
+        if cot == "full":
+            job["cot"] = "full"
         if style_base and style_base != style:
             job["style_base"] = style_base   # the style as written, before the tracks were added to it
         if layout:
@@ -794,6 +804,9 @@ def public_design(design):
     out["lyrics"] = design.get("lyrics") or ""
     out["lyrics_layout"] = design.get("lyrics_layout")
     out["tracks"] = design.get("tracks") or []
+    # The accompaniment: "chords" (YuE2 plays to the score's chords, cot=full) or "free" (they are
+    # left out and YuE2 makes its own, cot=melody); None = chords when the score has any.
+    out["harmony"] = design.get("harmony")
     out["score_url"] = presign_get(design["score_key"])
     out["score_download"] = presign_get(design["score_key"], safe_filename(design.get("name"), "abc"))
     return out
@@ -803,7 +816,8 @@ def design_key(source_id, design_id):
     return f"sources/{source_id}.designs/{design_id}.abc"
 
 
-def put_design(source, name, origin, abc=None, copy_from=None, lyrics="", layout=None, tracks=None, design_id=None, only_new=False):
+def put_design(source, name, origin, abc=None, copy_from=None, lyrics="", layout=None, tracks=None, design_id=None, only_new=False,
+               harmony=None):
     """A new design of `source` with the score `abc` (or the S3 object `copy_from`)."""
     design_id = design_id or uuid.uuid4().hex
     key = design_key(source["id"], design_id)
@@ -819,6 +833,8 @@ def put_design(source, name, origin, abc=None, copy_from=None, lyrics="", layout
         design["lyrics_layout"] = layout
     if tracks:
         design["tracks"] = tracks
+    if harmony:
+        design["harmony"] = harmony
     try:
         table.put_item(Item=design, **({"ConditionExpression": "attribute_not_exists(id)"} if only_new else {}))
     except ClientError as error:
@@ -864,6 +880,10 @@ def design_fields(body):
         fields["lyrics_layout"] = validate_lyrics_layout(body["lyrics_layout"])
     if "tracks" in body:
         fields["tracks"] = validate_tracks(body["tracks"]) or None
+    if "harmony" in body:
+        if body["harmony"] not in ("chords", "free", None):
+            raise HttpError(400, "harmony chords ya da free olmalı")
+        fields["harmony"] = body["harmony"]
     return fields
 
 
@@ -880,7 +900,8 @@ def create_design(source_id, body):
         if other.get("source_id") != source_id:
             raise HttpError(400, "Eser tasarımı bu besteye ait değil")
         design = put_design(source, name, f"«{other['name']}» kopyası", copy_from=other["score_key"],
-                            lyrics=other.get("lyrics") or "", layout=other.get("lyrics_layout"), tracks=other.get("tracks"))
+                            lyrics=other.get("lyrics") or "", layout=other.get("lyrics_layout"), tracks=other.get("tracks"),
+                            harmony=other.get("harmony"))
     elif body.get("abc") is not None:
         check_score(body["abc"])
         design = put_design(source, name, validate_text(body, "origin", 200, required=False) or "zaman çizgisinden",

@@ -43,7 +43,12 @@ const Timeline = (() => {
     const sections = ScoreModel.sections(model).map((run) => ({
       label: run.label || "", sung: run.sung, pickup: run.pickup, t0: bars[run.from].t0, t1: bars[run.to].t1, from: run.from, to: run.to,
     }));
-    return { vocal: voices.vocal, ins: voices.ins, rests, bars, sections, duration, bpm, unit, perUnit };
+    // Chord symbols where they start (when the score has them).
+    const chords = [];
+    model.bars.forEach((bar, b) => {
+      for (const c of bar.chords || []) if (bars[b]) chords.push({ name: c.name, bar: b, u0: bars[b].u0 + c.at, t0: (bars[b].u0 + c.at) * perUnit });
+    });
+    return { vocal: voices.vocal, ins: voices.ins, rests, bars, sections, chords, duration, bpm, unit, perUnit };
   }
 
   const build = (abc) => fromModel(ScoreModel.parse(abc));

@@ -447,6 +447,9 @@ function designSummary(design) {
   const at = design.lyrics_layout && design.lyrics_layout.at;
   parts.push(!total ? "söz yok" : at && at.length === total ? `${at.filter((n) => n != null).length}/${total} hece yerleşik` : "heceler henüz yerleştirilmedi");
   if (design.tracks && design.tracks.length) parts.push(`${design.tracks.length} iz`);
+  const chords = designChords(design);
+  if (chords) parts.push(design.harmony === "free" ? `${chords} akor (gönderilmiyor)` : `${chords} akorla`);
+  else if (chords === 0) parts.push("akorsuz");
   const used = jobs.filter((j) => j.design_id === design.id).length;
   if (used) parts.push(`${used} düzenleme`);
   return parts.join(" · ");
@@ -685,12 +688,20 @@ function renderPrep() {
     else lines.push("Notayı, hece yerleşimini ve izleri kendin belirlemek istersen önce notayı çıkar; ilk eser tasarımı ondan oluşur.");
   } else {
     lines.push(`🎼 Eser tasarımı «${design.name}»: ${designSummary(design)}`);
+    const chords = designChords(design);
+    if (chords === 0) lines.push("🎹 Eşlik: bu notada akor yok, eşliği YuE2 uyduracak. Şarkının kendi akorlarıyla denemek için bestede 🎼 Yeniden çıkar'a bas (yeni çıkarmalar akorları da alır), sonra o çıkarmadan yeni bir eser tasarımı oluştur.");
     const lyrics = $("lyrics").value.trim(), edited = editorLyrics(design);
     if (edited && lyrics && lyrics !== edited) lines.push('<span class="warn">⚠ Formdaki söz eser tasarımındakinden farklı. Düzenleme eser tasarımındaki sözle ve hece yerleşimiyle yapılır. Formdakini kullanmak istiyorsan 🎛 ile aç (formdaki söz açılır), hecelerini yerleştirip kaydet.</span>');
     else if (edited) lines.push("Nota, söz, hece yerleşimi, hecesiz ölçüler (enstrümana verilir), bölüm adları ve izler eser tasarımından alınıp YuE2'nin okuyacağı notaya, söze ve stile çevrilecek.");
     else if (lyrics) lines.push('<span class="warn">⚠ Bu söz eser tasarımında henüz notaya yerleştirilmedi; heceler melodiye otomatik yerleştirilecek. 🎛 ile açıp kontrol edip kaydetmen önerilir.</span>');
   }
   $("prep-state").innerHTML = lines.map((l) => `<div>${l.startsWith("<span") ? l : escapeHtml(l)}</div>`).join("");
+  const chordCount = design ? designChords(design) : null;
+  $("prep-harmony").classList.toggle("hidden", !chordCount);
+  if (chordCount) {
+    $("prep-harmony-count").textContent = `Notada ${chordCount} akor var.`;
+    $("prep-harmony-select").value = design.harmony === "free" ? "free" : "chords";
+  }
   $("prep-progress").classList.toggle("hidden", !busy);
   $("prep-transcribe").classList.toggle("hidden", busy || !!design || item.has_score);
   $("prep-transcribe").textContent = "🎼 Notayı çıkar (eser tasarımı için)";
@@ -702,6 +713,10 @@ function escapeHtml(text) {
   return text.replace(/[<&>"]/g, (ch) => ({ "<": "&lt;", "&": "&amp;", ">": "&gt;", '"': "&quot;" })[ch]);
 }
 
+$("prep-harmony-select").addEventListener("change", () => {
+  const design = selectedDesign();
+  if (design) setHarmony(design, $("prep-harmony-select").value);
+});
 $("prep-transcribe").addEventListener("click", () => { const item = selectedItem(); if (item) transcribeSource(item, $("prep-transcribe")); });
 $("prep-daw").addEventListener("click", () => {
   const item = selectedItem(), design = selectedDesign();
@@ -740,7 +755,27 @@ async function prepareDesign(design, style, lyrics = "") {
     lyrics = edited;
     try { map = Timeline.mapFromOnsets(Timeline.build(abc), design.lyrics_layout.at); } catch (error) { map = null; }
   } else lyrics = lyrics || design.lyrics || "";
-  return Arrange.compile({ abc, lyrics, map, tracks: design.tracks || [], style });
+  return Arrange.compile({ abc, lyrics, map, tracks: design.tracks || [], style, chords: design.harmony !== "free" });
+}
+
+// How many chords a design's score has (null until its score is read; the panels redraw then).
+const chordCounts = new Map();   // design id + its last change → count
+function designChords(design) {
+  const key = design.id + ":" + (design.updated_at || "");
+  if (chordCounts.has(key)) return chordCounts.get(key);
+  chordCounts.set(key, null);
+  designAbc(design).then((abc) => {
+    let count = 0;
+    try { count = ScoreModel.chordLine(ScoreModel.parse(abc)).length; } catch (error) { count = 0; }
+    chordCounts.set(key, count);
+    renderSources();
+    renderPrep();
+  }).catch(() => chordCounts.set(key, 0));
+  return null;
+}
+
+async function setHarmony(design, harmony) {
+  try { updateDesign(await api(`/designs/${design.id}`, { method: "PATCH", body: JSON.stringify({ harmony }) })); updateCreate(); } catch (error) { report(error); }
 }
 
 function showYuePreview(compiled, title, unsaved) {
@@ -761,16 +796,18 @@ function showYuePreview(compiled, title, unsaved) {
   $("yp-style").textContent = compiled.style || "(stil boş)";
   $("yp-lyrics").textContent = compiled.lyrics || "(söz yok)";
   $("yp-abc").textContent = compiled.abc;
-  // Besides these three the worker sends the planning mode (always "melody": the accompaniment is
-  // left to YuE2, see worker/agent.py) and the seed of each variant.
+  // Besides these three the worker sends the planning mode (cot: "full" when the score carries
+  // chords, else "melody"; see worker/agent.py) and the seed of each variant.
   const seed = $("seed").value === "" ? null : Number($("seed").value), variants = Number($("variants").value);
   const seeds = seed == null ? "rastgele" : variants === 2 ? `${seed} ve ${seed + 7919}` : String(seed);
   $("yp-request").replaceChildren(...[
-    ["mod (cot)", "melody: YuE2 bu melodiyi söyler/çalar, eşliği (akorları, enstrümanları) kendisi uydurur"],
+    ["mod (cot)", compiled.cot === "full"
+      ? `full: YuE2 bu melodiyi söyler/çalar, eşliği notadaki ${compiled.chords} akora göre çalar (enstrümanları stil belirler)`
+      : "melody: YuE2 bu melodiyi söyler/çalar, eşliği (akorları, enstrümanları) kendisi uydurur"],
     ["tohum (seed)", `${seeds}${variants === 2 ? " (2 varyasyon, her biri ayrı istek)" : ""}`],
     ["stil", `${compiled.style.length} karakter`], ["söz", `${compiled.lyrics.length} karakter`], ["nota", `${compiled.abc.split("\n").length} satır`],
   ].map(([k, v]) => { const row = document.createElement("div"); row.append(Object.assign(document.createElement("b"), { textContent: `${k}: ` }), v); return row; }));
-  previewRequest = { style: compiled.style, lyrics: compiled.lyrics, abc: compiled.abc, cot: "melody", seed };
+  previewRequest = { style: compiled.style, lyrics: compiled.lyrics, abc: compiled.abc, cot: compiled.cot, seed };
   $("yp-copied").textContent = "";
   $("yp-json").classList.add("hidden");
   $("yp-note").textContent = (compiled.style.length > 2000 ? "⚠ Stil 2000 karakterden uzun; kısaltman gerekir. " : "")
@@ -822,7 +859,7 @@ $("create").addEventListener("click", async () => {
       const compiled = await prepareDesign(design, body.style, body.lyrics);
       if (compiled.style.length > 2000) throw new Error("İzlerle birlikte stil 2000 karakteri aşıyor; stili ya da iz açıklamalarını kısalt");
       Object.assign(body, { abc: compiled.abc, lyrics: compiled.lyrics, style: compiled.style, style_base: body.style,
-        lyrics_layout: { at: compiled.at } });
+        lyrics_layout: { at: compiled.at }, cot: compiled.cot });
     }
     const result = await api("/jobs", { method: "POST", body: JSON.stringify(body) });
     jobs = [...result.jobs, ...jobs];
@@ -1110,7 +1147,7 @@ function fillJob(node, job) {
   const error = node.querySelector(".job-error");
   error.classList.toggle("hidden", !job.error);
   error.textContent = job.error || "";
-  const from = job.design_name ? ` · 🎼 eser tasarımı «${job.design_name}»`
+  const from = job.design_name ? ` · 🎼 eser tasarımı «${job.design_name}»${job.cot === "full" ? " · akorlarıyla" : ""}`
     : { prepared: " · 🎛 hazırlanmış nota", edited: " · 🎼 düzeltilmiş nota", transcript: " · 🎼 çıkarılmış nota" }[job.score_from] || (job.status ? " · 🎧 ses kaydından" : "");
   node.querySelector(".meta").textContent = fmtAgo(job.created_at) + from;
   node.querySelector(".rename").onclick = async () => {

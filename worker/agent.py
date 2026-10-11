@@ -236,8 +236,9 @@ def process(job):
     work = WORK / job_id
     work.mkdir(parents=True, exist_ok=True)
     try:
-        # A corrected score saved on the source goes to YuE2 directly (no SheetSage2 transcription);
-        # otherwise the recording is sent and the melody is extracted from it.
+        # A prepared score goes to YuE2 directly (no SheetSage2 transcription), with cot "full" when it
+        # carries chords to play to, else "melody"; otherwise the recording is sent and the melody is
+        # extracted from it.
         score = None
         if job.get("score_key"):
             score = s3.get_object(Bucket=BUCKET, Key=job["score_key"])["Body"].read().decode("utf-8")
@@ -254,7 +255,7 @@ def process(job):
                 response = requests.post(
                     f"{TURBO}/v1/jobs", headers=headers, timeout=120,
                     json={"style": job["style"], "lyrics": job["lyrics"], "seed": int(job["seed"]),
-                          "cot": "melody", "abc": score})
+                          "cot": job.get("cot") or "melody", "abc": score})
             else:
                 with source.open("rb") as handle:
                     response = requests.post(
