@@ -524,3 +524,4 @@ body.has-player { padding-bottom: 88px; }
 .daw-chord { position: absolute; top: 2px; height: 15px; border-left: 2px solid #6b8cff; padding: 0 4px; font-size: 11px; line-height: 15px; color: #c9d4ff; overflow: hidden; white-space: nowrap; box-sizing: border-box; }
 .chord-menu { left: 0; right: auto; min-width: 260px; }
 .chord-menu .menu-item { display: block; width: 100%; }
+.btn.attention { border-color: #d9a400; color: #8a6400; background: #fff6d6; }

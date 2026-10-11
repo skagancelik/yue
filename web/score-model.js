@@ -875,13 +875,176 @@ const ScoreModel = (() => {
     return { model: out, overwritten };
   }
 
+  // ---- tidying a transcribed score for YuE2
+  // A bar whose meter differs from the song's (a lone 2/4 in a 4/4 song) is folded away: enough
+  // silence of both voices around it is cut (or rests added) for the song to be in one meter again;
+  // sections, keys and chords keep their places. Returns { model, fixed, barMap } (old bar → new).
+  function evenMeter(model) {
+    const unit = Number((headerField(model, "L").split("/")[1]) || 8);
+    const m = unitsPerBar(headerField(model, "M") || "4/4", unit);
+    const units = barUnits(model);
+    const starts = [];
+    units.reduce((u, n) => { starts.push(u); return u + n; }, 0);
+    const total = starts[starts.length - 1] + units[units.length - 1];
+    const lines = Object.fromEntries(VOICES.map((v) => [v, voiceLine(model, v).notes]));
+    const busy = [...lines.vocal, ...lines.ins].map((n) => [n.u0, n.u0 + n.dur]).sort((a, b) => a[0] - b[0]);
+    // Silent spans of both voices: [from, to).
+    const silent = [];
+    let at = 0;
+    for (const [a, z] of busy) { if (a > at) silent.push([at, a]); at = Math.max(at, z); }
+    if (total > at) silent.push([at, total]);
+    const edits = [];   // { at, by }: by < 0 cuts [at, at - by), by > 0 adds rests at `at`
+    let fixed = 0;
+    for (let b = 0; b < units.length; b++) {
+      if (units[b] === m) continue;
+      let e = b;
+      while (e + 1 < units.length && units[e + 1] !== m) e++;
+      const from = starts[b], to = starts[e] + units[e], r = (to - from) % m;
+      b = e;
+      if (!r) continue;
+      fixed++;
+      // Cut silence nearest to the odd bars (from the bar before them to the bar after), or else
+      // add rests where both voices are silent, never inside a note.
+      const lo = b > 0 ? from - units[b - 1] : from, hi = Math.min(total, to + m);
+      const near = (x, y) => Math.abs(x[1] - from) - Math.abs(y[1] - from);
+      const cut = silent.map(([a, z]) => [Math.max(a, lo), Math.min(z, hi)]).filter(([a, z]) => z - a >= r).sort(near)[0];
+      const pad = [...silent, [total, total]].sort(near)[0];
+      edits.push(cut ? { at: cut[1] - r, by: -r } : { at: pad[1], by: m - r });
+    }
+    const metered = model.bars.some((bar) => bar.meter);
+    if (!edits.length && !metered) return { model, fixed: 0, barMap: model.bars.map((_, b) => b) };
+    edits.sort((x, y) => x.at - y.at);
+    const f = (u) => {
+      let out = u;
+      for (const { at: a, by } of edits) {
+        if (by < 0) { if (u >= a - by) out += by; else if (u > a) out -= u - a; }
+        else if (u >= a) out += by;
+      }
+      return out;
+    };
+    const length = f(total), count = Math.max(1, Math.ceil(length / m));
+    const bars = Array.from({ length: count }, () => ({ vocal: "Z", ins: "Z", labels: [], meter: null, key: null, chords: [] }));
+    const barMap = starts.map((u) => Math.min(count - 1, Math.floor(f(u) / m)));
+    model.bars.forEach((bar, b) => {
+      const into = bars[barMap[b]];
+      into.labels.push(...bar.labels);
+      if (bar.key) into.key = bar.key;
+    });
+    let out = { header: model.header, bars };
+    for (const voice of VOICES) out = writeLine(out, voice, lines[voice].map((n) => ({ ...n, u0: f(n.u0) })));
+    out = placeChords(out, chordLine(model).map((c) => ({ ...c, u: f(c.u) })));
+    return { model: out, fixed, barMap };
+  }
+
+  // Notes on the beat grid (eighths; sixteenths where eighths would run notes together). A phrase
+  // (notes with less than a quarter of silence between them) that sits a little off the grid moves
+  // as a whole to where its long notes fall on the strongest beats; then each note goes to the
+  // nearest grid line. Every note stays (in order), so the syllables stay on theirs.
+  // Returns { model, moved } (notes that changed).
+  function quantize(model) {
+    const unit = Number((headerField(model, "L").split("/")[1]) || 8);
+    const g = unit / 8, fine = Math.max(1, g / 2);
+    if (!Number.isInteger(g) || g < 1) return { model, moved: 0 };
+    const units = barUnits(model);
+    const starts = [];
+    units.reduce((u, n) => { starts.push(u); return u + n; }, 0);
+    const total = starts[starts.length - 1] + units[units.length - 1];
+    const strength = (u) => {
+      let b = starts.length - 1;
+      while (b > 0 && starts[b] > u) b--;
+      const pos = u - starts[b], n = units[b];
+      if (pos % g) return 0;
+      return pos === 0 ? 4 : pos % (n / 2) === 0 ? 3 : pos % (2 * g) === 0 ? 2 : 1;
+    };
+    const snap = (u, step) => {
+      const down = Math.floor(u / step) * step, up = down + step;
+      if (u - down !== up - u) return u - down < up - u ? down : up;
+      return strength(up) > strength(down) ? up : down;
+    };
+    let out = model, moved = 0;
+    for (const voice of VOICES) {
+      const notes = voiceLine(out, voice).notes;
+      if (!notes.length) continue;
+      const phrases = [];
+      notes.forEach((n, i) => {
+        if (!i || n.u0 - (notes[i - 1].u0 + notes[i - 1].dur) >= 2 * g) phrases.push([]);
+        phrases[phrases.length - 1].push(i);
+      });
+      const on = new Array(notes.length);
+      for (const phrase of phrases) {
+        let best = 0, bestScore = -Infinity;
+        for (let s = -Math.floor(g / 2); s <= Math.floor(g / 2); s++) {
+          if (notes[phrase[0]].u0 + s < 0) continue;
+          const score = phrase.reduce((sum, i) => sum + strength(notes[i].u0 + s) * notes[i].dur, 0) - Math.abs(s) * 0.01;
+          if (score > bestScore) { best = s; bestScore = score; }
+        }
+        for (const i of phrase) on[i] = notes[i].u0 + best;
+      }
+      // Each note to an eighth line next to it (sixteenths only where eighths would run notes
+      // together), in order: the nearest, then the stronger beat, then the longer note's beat.
+      const options = on.map((u, i) => {
+        const pick = (step, extra) => [...new Set([Math.floor(u / step) * step, Math.ceil(u / step) * step])]
+          .map((c) => ({ c, cost: Math.abs(c - u) + extra - 0.01 * strength(c) * Math.min(notes[i].dur, 4 * g) }));
+        return [...pick(g, 0), ...pick(fine, g).filter((o) => o.c % g)].filter((o) => o.c >= 0);
+      });
+      let prev = options[0].map((o) => ({ cost: o.cost, path: [o.c] }));
+      for (let i = 1; i < options.length; i++) {
+        prev = options[i].map((o) => {
+          const from = prev.filter((p) => p.path[p.path.length - 1] < o.c).sort((x, y) => x.cost - y.cost)[0];
+          return from ? { cost: from.cost + o.cost, path: [...from.path, o.c] } : null;
+        }).filter(Boolean);
+        if (!prev.length) { prev = null; break; }
+      }
+      if (!prev) continue;   // too dense to put on a grid; left as it is
+      prev.sort((x, y) => x.cost - y.cost)[0].path.forEach((c, i) => { on[i] = c; });
+      const next = notes.map((n, i) => {
+        const after = i + 1 < notes.length ? on[i + 1] : total;
+        const legato = i + 1 < notes.length && notes[i + 1].u0 === n.u0 + n.dur;
+        const shift = on[i] - n.u0;
+        let end = legato ? after : snap(n.u0 + n.dur + shift, g);
+        end = Math.min(Math.max(end, on[i] + fine), after, total);
+        if (end <= on[i]) end = on[i] + 1;
+        return { u0: on[i], dur: end - on[i], midi: n.midi };
+      });
+      moved += next.filter((n, i) => n.u0 !== notes[i].u0 || n.dur !== notes[i].dur).length;
+      out = writeLine(out, voice, next);
+    }
+    return { model: out, moved };
+  }
+
+  // How much of the vocal melody starts off the eighth-note grid, and whether the meter changes:
+  // what makes YuE2 hear a lagging, stumbling melody. { offGrid, notes, meterChanges }.
+  function gridCheck(model) {
+    const unit = Number((headerField(model, "L").split("/")[1]) || 8);
+    const g = unit / 8;
+    const m = unitsPerBar(headerField(model, "M") || "4/4", unit);
+    const units = barUnits(model);
+    let notes = [];
+    try { notes = voiceLine(model, "vocal").notes; } catch (error) { notes = []; }
+    let u = 0;
+    const starts = units.map((n) => { const s = u; u += n; return s; });
+    const off = Number.isInteger(g) && g >= 1 ? notes.filter((n) => {
+      let b = starts.length - 1;
+      while (b > 0 && starts[b] > n.u0) b--;
+      return (n.u0 - starts[b]) % g !== 0;
+    }).length : 0;
+    return { offGrid: off, notes: notes.length, meterChanges: units.filter((n) => n !== m).length };
+  }
+
+  // Both: one meter, then the grid. { model, fixed, barMap, moved }.
+  function tidy(model) {
+    const even = evenMeter(model);
+    const q = quantize(even.model);
+    return { model: q.model, fixed: even.fixed, barMap: even.barMap, moved: q.moved };
+  }
+
   // MIDI pitch as a name for the status line: "F#4", "Bb3".
   function pitchName(note) {
     return note.rest ? "sus" : note.letter + ({ 2: "𝄪", 1: "♯", 0: "", "-1": "♭", "-2": "𝄫" })[note.alter] + note.octave;
   }
 
   return { parse, serialize, sections, sectionOf, setSection, swapVoices, tieSafeRange,
-    voiceNotes, editNote, moveNote, voiceLine, writeLine, chordLine, placeChords, hasChords, withoutChords, keyInfo, shiftFrom, resizeNote, insertBefore, removeNotes, clipNotes, pasteNotes, moveNotes, writeBar, pitchName, unitDenominator: (m) => Number((headerField(m, "L").split("/")[1]) || 8) };
+    voiceNotes, editNote, moveNote, voiceLine, writeLine, chordLine, placeChords, hasChords, withoutChords, keyInfo, tidy, evenMeter, quantize, gridCheck, shiftFrom, resizeNote, insertBefore, removeNotes, clipNotes, pasteNotes, moveNotes, writeBar, pitchName, unitDenominator: (m) => Number((headerField(m, "L").split("/")[1]) || 8) };
 })();
 
 if (typeof module !== "undefined") module.exports = ScoreModel;

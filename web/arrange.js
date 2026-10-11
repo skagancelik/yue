@@ -269,6 +269,13 @@ const Arrange = (() => {
       report.push({ kind: "ok", text: `Notadaki ${had} akor gidiyor: YuE2 eşliği şarkının bu akorlarına göre çalacak (mod: full).` });
     }
     const cot = had && chords ? "full" : "melody";
+    const grid = ScoreModel.gridCheck(model);
+    if (grid.notes && grid.offGrid / grid.notes > 0.2) {
+      report.push({ kind: "warn", text: `Vokal notalarının ${grid.offGrid}/${grid.notes} tanesi vuruş dışında başlıyor; YuE2 melodiyi kaymış, aksak duyar. Zaman çizgisinde "🧲 Notaları hizala" ile düzelt.` });
+    }
+    if (grid.meterChanges) {
+      report.push({ kind: "warn", text: `Notada ${grid.meterChanges} ölçü şarkının ölçüsünden farklı (ör. 4/4 içinde 2/4); ritim orada takılır. "🧲 Notaları hizala" bunu da düzeltir.` });
+    }
     let tl = Timeline.fromModel(model);
     const sylls = LyricsLayout.allSyllables(lyrics);
     if (!Array.isArray(map) || map.length !== sylls.length) {
