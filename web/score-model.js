@@ -284,6 +284,14 @@ const ScoreModel = (() => {
     return alters;
   }
 
+  // The key of a K: line: { tonic (pitch class), minor, flats (spell with flats) }.
+  function keyInfo(line) {
+    const name = (line || "").replace(/^K:\s*/, "").trim().replace(/min$/, "m").replace(/maj$/, "");
+    if (!(name in KEY_SHARPS)) throw new Error(`desteklenmeyen ton "${name}"`);
+    const m = name.match(/^([A-G])([#b]?)(m?)$/);
+    return { tonic: (NATURAL[m[1]] + (m[2] === "#" ? 1 : m[2] === "b" ? -1 : 0) + 12) % 12, minor: m[3] === "m", flats: KEY_SHARPS[name] < 0 };
+  }
+
   function headerField(model, name) {
     const line = model.header.find((l) => l.startsWith(name + ":"));
     return line ? line.slice(name.length + 1).trim() : "";
@@ -873,7 +881,7 @@ const ScoreModel = (() => {
   }
 
   return { parse, serialize, sections, sectionOf, setSection, swapVoices, tieSafeRange,
-    voiceNotes, editNote, moveNote, voiceLine, writeLine, chordLine, placeChords, hasChords, withoutChords, shiftFrom, resizeNote, insertBefore, removeNotes, clipNotes, pasteNotes, moveNotes, writeBar, pitchName, unitDenominator: (m) => Number((headerField(m, "L").split("/")[1]) || 8) };
+    voiceNotes, editNote, moveNote, voiceLine, writeLine, chordLine, placeChords, hasChords, withoutChords, keyInfo, shiftFrom, resizeNote, insertBefore, removeNotes, clipNotes, pasteNotes, moveNotes, writeBar, pitchName, unitDenominator: (m) => Number((headerField(m, "L").split("/")[1]) || 8) };
 })();
 
 if (typeof module !== "undefined") module.exports = ScoreModel;

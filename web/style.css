@@ -522,3 +522,5 @@ body.has-player { padding-bottom: 88px; }
 .prep-harmony select { width: auto; max-width: 100%; }
 .daw-chords { background: var(--panel); }
 .daw-chord { position: absolute; top: 2px; height: 15px; border-left: 2px solid #6b8cff; padding: 0 4px; font-size: 11px; line-height: 15px; color: #c9d4ff; overflow: hidden; white-space: nowrap; box-sizing: border-box; }
+.chord-menu { left: 0; right: auto; min-width: 260px; }
+.chord-menu .menu-item { display: block; width: 100%; }
