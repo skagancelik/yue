@@ -169,6 +169,20 @@ test("chords: kept apart from the notes, written back where they start, carried 
   assert.strictEqual(Arrange.compile({ abc: ABC, lyrics: "", map: [], style: "pop" }).cot, "melody", "a score without chords is melody");
 });
 
+test("borrowChords puts another extraction's chords into an edited score by time, notes untouched", () => {
+  const mine = "X:1\nL:1/8\nM:4/4\nQ:1/4=120\nK:C\n% verse\nV: Vocal\nc2d2e2f2|g8|a8|\nV: Ins\nZ3|\n";
+  // The newer extraction: a pickup bar more at the start (4 units = 1 s at 120 bpm), its own notes.
+  // Its note unit is a sixteenth (mine an eighth), so the same moment is twice as many units there.
+  const newer = 'X:1\nL:1/16\nM:2/4\nQ:1/4=120\nK:C\nV: Vocal\nZ|"C"e4e4|"Am"d8|"F"c6"G"c2|z8|"Dm"c8|z8|z8|"E"c8|\nV: Ins\nZ9|\n';
+  const out = Arrange.borrowChords(mine, newer);
+  const model = ScoreModel.parse(out.abc);
+  // Times: C at 1 s → my unit 4, Am 2 s → 8, F 3 s → 12, G 3.75 s → 15, Dm 5 s → 20; E at 8 s is past my end.
+  assert.deepStrictEqual(ScoreModel.chordLine(model), [{ u: 4, name: "C" }, { u: 8, name: "Am" }, { u: 12, name: "F" }, { u: 15, name: "G" }, { u: 20, name: "Dm" }]);
+  assert.strictEqual(out.count, 5);
+  assert.strictEqual(out.dropped, 1);
+  assert.deepStrictEqual(ScoreModel.voiceLine(model, "vocal").notes, ScoreModel.voiceLine(ScoreModel.parse(mine), "vocal").notes, "the notes stay");
+});
+
 test("scopeText names sections and bars", () => {
   const model = ScoreModel.parse(ABC);
   const runs = ScoreModel.sections(model);

@@ -458,6 +458,35 @@ function designSummary(design) {
 // The new-design form of one source, kept across redraws: { sourceId, name, start }.
 let designForm = null;
 
+// The chords of the newest melody extraction that has any, put into a design (Arrange.borrowChords):
+// its notes, lyrics and layout stay; only the chords change.
+async function borrowChords(item, design, button) {
+  button.disabled = true;
+  try {
+    const versions = item.transcripts || [];
+    let found = null;
+    for (let k = versions.length - 1; k >= 0 && !found; k--) {
+      const response = await fetch(versions[k].url);
+      if (!response.ok) continue;
+      const text = await response.text();
+      try { if (ScoreModel.chordLine(ScoreModel.parse(text)).length) found = { k, text }; } catch (error) { /* unreadable: try an older one */ }
+    }
+    if (!found) {
+      alert("Bu bestenin melodi çıkarmalarında akor yok. Önce bestede 🎼 Yeniden çıkar'a bas (yeni çıkarmalar akorları da alır), bitince tekrar dene.");
+      return;
+    }
+    const out = Arrange.borrowChords(await designAbc(design), found.text);
+    const had = ScoreModel.chordLine(ScoreModel.parse(await designAbc(design))).length;
+    const [mine, theirs] = out.tempo;
+    const tempoNote = Math.abs(mine - theirs) / theirs > 0.02 ? `\n\nDikkat: tempolar farklı (senin notan ${mine}, çıkarma ${theirs} BPM); akorlar ilerledikçe kayabilir, zaman çizgisinde kontrol et.` : "";
+    const question = `v${found.k + 1} çıkarmasındaki ${out.count} akor «${design.name}» eser tasarımına eklensin mi?${had ? ` (Tasarımdaki ${had} akorun yerini alır.)` : ""}\n\nNotalar, sözler ve hece yerleşimi değişmez. Her akor çıkarmada başladığı saniyeye, en yakın sekizliğe yerleşir.${out.dropped ? ` Notanın sonundan sonraya düşen ${out.dropped} akor alınmaz.` : ""}${tempoNote}`;
+    if (!confirm(question)) return;
+    updateDesign(await api(`/designs/${design.id}`, { method: "PATCH", body: JSON.stringify({ abc: out.abc }) }));
+    updateCreate();
+  } catch (error) { report(error); }
+  finally { button.disabled = false; }
+}
+
 function renderDesigns(box, item) {
   const list = sourceDesigns(item);
   const versions = item.transcripts || [];
@@ -495,6 +524,8 @@ function renderDesigns(box, item) {
     });
     button(picked ? "✓ Seçili" : "Bununla düzenle", "Düzenleme bu eser tasarımıyla yapılsın", () => { selectDesign(item, design); window.scrollTo({ top: 0, behavior: "smooth" }); },
       "btn small " + (picked ? "ghost" : "primary"));
+    if (versions.length) button("🎹 Akorları ekle", "Bestenin akorlu en yeni melodi çıkarmasındaki akorları bu eser tasarımına ekle. Notalar, sözler ve hece yerleşimi değişmez.",
+      (event) => borrowChords(item, design, event.currentTarget));
     button("✎", "Adını değiştir", async () => {
       const name = prompt("Eser tasarımının adı", design.name);
       if (!name || !name.trim() || name.trim() === design.name) return;
