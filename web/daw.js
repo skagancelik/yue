@@ -522,6 +522,10 @@ function renderDawBar() {
   else info = `Tıkla: ${daw.selMode === "word" ? "kelime" : "hece"} seç (Alt+tık: ${daw.selMode === "word" ? "tek hece" : "kelime"}) · boş yerden sürükle: alan seç (melodide: notaları seç, kes/kopyala/yapıştır) · Shift: aralık · ⌘/Ctrl: ekle · notaya tıkla: perde/süre · sürükle: taşı (Shift: devamıyla) · uçlarını çek: uzat/kısalt · melodide boş yere çift tık: yeni nota · Boşluk: çal`;
   $("daw-info").textContent = info;
   $("daw-undo").disabled = !daw.history.length;
+  const grid = ScoreModel.gridCheck(daw.model);
+  const loose = grid.offGrid + grid.meterChanges;
+  $("daw-tidy").textContent = loose ? `🧲 Notaları hizala (${loose})` : "🧲 Notaları hizala";
+  $("daw-tidy").classList.toggle("attention", grid.notes > 0 && (grid.offGrid / grid.notes > 0.2 || grid.meterChanges > 0));
   $("daw-save").disabled = !dawDirty() && !daw.layoutFresh;
   $("daw-after").disabled = !n;
   $("daw-origin").textContent = `Nota: ${daw.origin}${daw.scoreDirty ? " (değişti)" : ""}`;
@@ -1447,6 +1451,32 @@ function trimDawEnd() {
   dawMsg(`Sondaki ${extra} boş ölçü silindi; şarkı artık ${keep} ölçü (geri alınabilir).`);
 }
 
+// The whole score on the beat grid and in one meter (ScoreModel.tidy). Every vocal note stays, in
+// order, so the syllables stay on theirs; track ranges follow their bars.
+function tidyDaw() {
+  if (scoreLocked()) return;
+  const before = ScoreModel.gridCheck(daw.model);
+  let result;
+  try { result = ScoreModel.tidy(daw.model); } catch (error) { dawMsg(error.message); return; }
+  if (!result.moved && !result.fixed) { dawMsg("Notalar zaten vuruşta ve tek ölçüde; değişecek bir şey yok."); return; }
+  const count = daw.model.bars.length;
+  try { dawScore(result.model, null, null, daw.map); } catch (error) { dawMsg(error.message); return; }
+  const newCount = daw.model.bars.length;
+  let moved = false;
+  for (const track of daw.tracks) {
+    if (!track.bars || !result.fixed) continue;
+    const end = (z) => (z + 1 < count ? result.barMap[z + 1] - 1 : newCount - 1);
+    const bars = track.bars.map(([a, z]) => [result.barMap[a] ?? newCount - 1, Math.max(result.barMap[a] ?? newCount - 1, end(z))]);
+    if (JSON.stringify(bars) !== JSON.stringify(track.bars)) { track.bars = bars; moved = true; }
+  }
+  if (moved) { daw.tracksDirty = true; renderDaw(); }
+  const after = ScoreModel.gridCheck(daw.model);
+  const parts = [];
+  if (result.moved) parts.push(`${result.moved} nota vuruşa oturtuldu (vuruş dışında başlayan vokal notası ${before.offGrid} → ${after.offGrid})`);
+  if (result.fixed) parts.push(`${result.fixed} yerde farklı ölçü (ör. 2/4) kaldırıldı, araya sus eklendi ya da sus kısaltıldı`);
+  dawMsg(`${parts.join("; ")}. Heceler notalarında kaldı. Dinleyip kontrol et; beğenmezsen ↶ Geri al. Akorları melodiden önerdiysen, kaydettikten sonra "🎼 Melodiden öner"i yeniden çalıştır.`);
+}
+
 function closeDawMenu() {
   for (const menu of document.querySelectorAll(".daw-menu")) menu.remove();
 }
@@ -1833,6 +1863,7 @@ $("daw-undo").addEventListener("click", () => {
   renderDaw();
   if (lyricsChanged) renderDawWords();
 });
+$("daw-tidy").addEventListener("click", tidyDaw);
 $("daw-auto").addEventListener("click", () => {
   if (!confirm("Heceler melodinin cümlelerine göre yeniden yerleşsin mi? (Harf düzeltmeleri kalır; geri alınabilir.)")) return;
   daw.sel.clear();

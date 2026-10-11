@@ -183,6 +183,30 @@ test("borrowChords puts another extraction's chords into an edited score by time
   assert.deepStrictEqual(ScoreModel.voiceLine(model, "vocal").notes, ScoreModel.voiceLine(ScoreModel.parse(mine), "vocal").notes, "the notes stay");
 });
 
+test("tidy puts a phrase back on the beat and folds a lone 2/4 bar away, keeping every note", () => {
+  const abc = "X:1\nL:1/32\nM:4/4\nQ:1/4=120\nK:C\n% verse\nV: Vocal\nF8E8F8z8|z2F8E8F8z6|Z|\nV: Ins\nZ3|\n"
+    + "% chorus\nV: Vocal\nM:2/4\nc8d8|\nV: Ins\nM:2/4\nZ|\nV: Vocal\nM:4/4\n\"C\"e32|\nV: Ins\nM:4/4\nZ|\n";
+  const model = ScoreModel.parse(abc);
+  assert.deepStrictEqual(ScoreModel.gridCheck(model), { offGrid: 3, notes: 9, meterChanges: 1 });
+  const done = ScoreModel.tidy(model);
+  assert.strictEqual(done.fixed, 1);
+  const out = ScoreModel.parse(ScoreModel.serialize(done.model).text);
+  assert.deepStrictEqual(ScoreModel.gridCheck(out), { offGrid: 0, notes: 9, meterChanges: 0 });
+  // The second phrase has the first one's rhythm again; the 2/4 bar's half bar of silence before it is cut.
+  assert.deepStrictEqual(ScoreModel.voiceLine(out, "vocal").notes.map((n) => [n.u0, n.dur]),
+    [[0, 8], [8, 8], [16, 8], [32, 8], [40, 8], [48, 8], [80, 8], [88, 8], [96, 32]]);
+  assert.strictEqual(out.bars.length, 4);
+  assert.deepStrictEqual(out.bars.map((b) => b.labels.join()), ["verse", "", "chorus", ""]);
+  assert.deepStrictEqual(ScoreModel.chordLine(out), [{ u: 96, name: "C" }]);
+  assert.deepStrictEqual(done.barMap, [0, 1, 2, 2, 3]);
+  // A tidy score is left as it is.
+  assert.strictEqual(ScoreModel.tidy(out).moved, 0);
+  // Sixteenths inside a phrase go to the eighths next to them, in order.
+  const run = ScoreModel.parse("X:1\nL:1/32\nM:4/4\nK:C\nV: Vocal\nc6d4e6z16|\nV: Ins\nZ|\n");
+  const runOut = ScoreModel.tidy(run).model;
+  assert.deepStrictEqual(ScoreModel.voiceLine(runOut, "vocal").notes.map((n) => [n.u0, n.dur]), [[0, 4], [4, 4], [8, 8]]);
+});
+
 test("suggestChords harmonizes a melody in its key, from the notes alone", () => {
   const score = (key, vocal) => `X:1\nL:1/8\nM:4/4\nQ:1/4=100\nK:${key}\n% verse\nV: Vocal\n${vocal}\nV: Ins\n${"z8|".repeat(vocal.split("|").length - 1)}\n`;
   const names = (abc) => ScoreModel.chordLine(ScoreModel.parse(abc)).map((c) => `${c.u}:${c.name}`).join(" ");
