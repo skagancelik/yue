@@ -458,6 +458,23 @@ function designSummary(design) {
 // The new-design form of one source, kept across redraws: { sourceId, name, start }.
 let designForm = null;
 
+// Chords suggested from the design's own melody (Arrange.suggestChords), after asking.
+async function suggestChords(design, button) {
+  button.disabled = true;
+  try {
+    const abc = await designAbc(design);
+    const out = Arrange.suggestChords(abc);
+    if (!out.count) { alert("Bu notada akor önermek için nota yok."); return; }
+    const had = ScoreModel.chordLine(ScoreModel.parse(abc)).length;
+    const list = ScoreModel.chordLine(ScoreModel.parse(out.abc)).map((c) => c.name);
+    const shown = [...new Set(list)].join(", ");
+    if (!confirm(`Melodiye göre ${out.count} akor önerildi (ton: ${out.key}; kullanılan akorlar: ${shown}).${had ? ` Tasarımdaki ${had} akorun yerini alır.` : ""}\n\n«${design.name}» eser tasarımına eklensin mi? Notalar, sözler ve hece yerleşimi değişmez. Zaman çizgisinde Akor şeridinde görür, çalarken duyarsın; beğenmezsen Eşlik'i "Akorsuz" yaparsın.`)) return;
+    updateDesign(await api(`/designs/${design.id}`, { method: "PATCH", body: JSON.stringify({ abc: out.abc }) }));
+    updateCreate();
+  } catch (error) { report(error); }
+  finally { button.disabled = false; }
+}
+
 // The chords of the newest melody extraction that has any, put into a design (Arrange.borrowChords):
 // its notes, lyrics and layout stay; only the chords change.
 async function borrowChords(item, design, button) {
@@ -524,8 +541,24 @@ function renderDesigns(box, item) {
     });
     button(picked ? "✓ Seçili" : "Bununla düzenle", "Düzenleme bu eser tasarımıyla yapılsın", () => { selectDesign(item, design); window.scrollTo({ top: 0, behavior: "smooth" }); },
       "btn small " + (picked ? "ghost" : "primary"));
-    if (versions.length) button("🎹 Akorları ekle", "Bestenin akorlu en yeni melodi çıkarmasındaki akorları bu eser tasarımına ekle. Notalar, sözler ve hece yerleşimi değişmez.",
-      (event) => borrowChords(item, design, event.currentTarget));
+    // Chords: suggested from the design's own notes, or taken from a melody extraction with chords.
+    const wrap = el("span", "menu-wrap");
+    const open = el("button", "btn ghost small menu-btn", null, "🎹 Akorları ekle");
+    open.type = "button";
+    open.title = "Bu eser tasarımına akor ekle. Notalar, sözler ve hece yerleşimi değişmez.";
+    const menu = el("div", "menu chord-menu hidden");
+    const option = (text, note, run) => {
+      const b = el("button", "menu-item");
+      b.type = "button";
+      b.append(el("div", null, null, text), el("div", "muted small", null, note));
+      b.onclick = (event) => { event.stopPropagation(); closeMenus(); run(); };
+      menu.append(b);
+    };
+    option("🎼 Melodiden öner", "Anında, ses dosyası gerekmez: notalara uyan akorlar tahmin edilir", () => suggestChords(design, open));
+    option("🎧 Kayıttan çıkarılanları al", versions.length ? "Akorlu bir melodi çıkarması gerekir (🎼 Yeniden çıkar)" : "Önce bestenin melodisi notaya çıkarılmalı", () => borrowChords(item, design, open));
+    open.onclick = (event) => { event.stopPropagation(); const was = menu.classList.contains("hidden"); closeMenus(); menu.classList.toggle("hidden", !was); };
+    wrap.append(open, menu);
+    actions.append(wrap);
     button("✎", "Adını değiştir", async () => {
       const name = prompt("Eser tasarımının adı", design.name);
       if (!name || !name.trim() || name.trim() === design.name) return;

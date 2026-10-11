@@ -339,7 +339,97 @@ const Arrange = (() => {
     return { abc: ScoreModel.serialize(out).text, count: line.length, dropped, tempo: [tl.bpm, otl.bpm] };
   }
 
-  return { compile, borrowChords, sungNotes, composeStyle, trackPhrase, scopeText, canon, tagText, INSTRUMENTS, FEELS, feelLabel, instrumentLabel };
+  // ---- chords suggested from the melody (no recording needed)
+  // The key's own triads; each segment (a bar, or half of a 4/4 bar) gets the one whose tones its
+  // melody notes (Vocal and Ins, longer and on-the-beat notes counting more) fit best. A Viterbi pass
+  // keeps the harmony from changing without reason, starts and ends on the tonic, and likes V → I.
+  const SHARP_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+  const FLAT_NAMES = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+  // [semitones above the tonic, minor triad, how common]
+  const MAJOR_TRIADS = [[0, false, 1], [2, true, 0.55], [4, true, 0.3], [5, false, 0.9], [7, false, 0.9], [9, true, 0.7], [10, false, 0.35]];
+  const MINOR_TRIADS = [[0, true, 1], [3, false, 0.65], [5, true, 0.8], [7, false, 0.7], [7, true, 0.5], [8, false, 0.7], [10, false, 0.65]];
+  // Krumhansl–Kessler key profiles (how much each degree belongs to a major / minor key).
+  const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
+  const MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.6, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
+  const MAJOR_KEYS = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+  const MINOR_KEYS = ["Cm", "C#m", "Dm", "Ebm", "Em", "Fm", "F#m", "Gm", "G#m", "Am", "Bbm", "Bm"];
+
+  // The key the melody is in, from how long each pitch class sounds (the written K: wins a near tie).
+  function melodyKey(notes, written) {
+    const hist = new Array(12).fill(0);
+    for (const n of notes) hist[n.midi % 12] += n.u1 - n.u0;
+    const corr = (profile, tonic) => {
+      const xs = hist, ys = xs.map((_, pc) => profile[(pc - tonic + 12) % 12]);
+      const mx = xs.reduce((a, b) => a + b, 0) / 12, my = ys.reduce((a, b) => a + b, 0) / 12;
+      let num = 0, dx = 0, dy = 0;
+      for (let i = 0; i < 12; i++) { num += (xs[i] - mx) * (ys[i] - my); dx += (xs[i] - mx) ** 2; dy += (ys[i] - my) ** 2; }
+      return dx && dy ? num / Math.sqrt(dx * dy) : 0;
+    };
+    let best = { ...written, score: corr(written.minor ? MINOR_PROFILE : MAJOR_PROFILE, written.tonic) + 0.02 };
+    for (let tonic = 0; tonic < 12; tonic++) for (const minor of [false, true]) {
+      const score = corr(minor ? MINOR_PROFILE : MAJOR_PROFILE, tonic);
+      if (score > best.score) best = { tonic, minor, score };
+    }
+    const name = (best.minor ? MINOR_KEYS : MAJOR_KEYS)[best.tonic];
+    return { ...ScoreModel.keyInfo(`K:${name}`), name };
+  }
+
+  function suggestChords(abc) {
+    const model = ScoreModel.parse(abc);
+    const tl = Timeline.fromModel(model);
+    const notes = [...tl.vocal, ...tl.ins];
+    const key = melodyKey(notes, ScoreModel.keyInfo(model.header.find((l) => l.startsWith("K:"))));
+    const names = key.flats ? FLAT_NAMES : SHARP_NAMES;
+    const chords = (key.minor ? MINOR_TRIADS : MAJOR_TRIADS).map(([step, minor, common], degree) => {
+      const root = (key.tonic + step) % 12;
+      return { degree, root, tones: [root, (root + (minor ? 3 : 4)) % 12, (root + 7) % 12], common, name: names[root] + (minor ? "m" : "") };
+    });
+    // Segments: a bar, or its halves when it is four beats long or more and splits evenly.
+    const beat = tl.unit / 4;
+    const segments = [];
+    for (const bar of tl.bars) {
+      if (bar.units >= 4 * beat && bar.units % 2 === 0) segments.push([bar.u0, bar.u0 + bar.units / 2], [bar.u0 + bar.units / 2, bar.u1]);
+      else segments.push([bar.u0, bar.u1]);
+    }
+    const fit = segments.map(([s, e]) => {
+      const weights = new Map();
+      let total = 0;
+      for (const n of notes) {
+        const over = Math.min(n.u1, e) - Math.max(n.u0, s);
+        if (over <= 0) continue;
+        const w = over * (n.u0 === s ? 1.5 : 1);
+        weights.set(n.midi % 12, (weights.get(n.midi % 12) || 0) + w);
+        total += w;
+      }
+      return chords.map((c) => {
+        if (!total) return 0;
+        let score = 0;
+        for (const [pc, w] of weights) score += (pc === c.root ? 1.15 : c.tones.includes(pc) ? 1 : -0.55) * w;
+        return score / total;
+      });
+    });
+    const count = segments.length;
+    if (!count) return { abc, count: 0, key: "" };
+    const local = (i, c) => fit[i][c] + 0.15 * chords[c].common + (i === 0 && c === 0 ? 0.3 : 0) + (i === count - 1 && c === 0 ? 0.3 : 0);
+    const dominant = (k) => chords[k].root === (key.tonic + 7) % 12;
+    const move = (a, b) => (a === b ? 0 : -0.3) + (dominant(a) && b === 0 ? 0.12 : 0);
+    let best = chords.map((_, c) => local(0, c));
+    const back = [];
+    for (let i = 1; i < count; i++) {
+      const from = chords.map((_, c) => chords.reduce((k, _, a) => (best[a] + move(a, c) > best[k] + move(k, c) ? a : k), 0));
+      back.push(from);
+      best = chords.map((_, c) => best[from[c]] + move(from[c], c) + local(i, c));
+    }
+    let c = best.reduce((k, v, i) => (v > best[k] ? i : k), 0);
+    const path = [c];
+    for (let i = back.length - 1; i >= 0; i--) { c = back[i][c]; path.unshift(c); }
+    const line = [];
+    path.forEach((ch, i) => { if (!i || ch !== path[i - 1]) line.push({ u: segments[i][0], name: chords[ch].name }); });
+    const out = ScoreModel.placeChords(ScoreModel.withoutChords(model), line);
+    return { abc: ScoreModel.serialize(out).text, count: line.length, key: key.name };
+  }
+
+  return { compile, borrowChords, suggestChords, sungNotes, composeStyle, trackPhrase, scopeText, canon, tagText, INSTRUMENTS, FEELS, feelLabel, instrumentLabel };
 })();
 
 if (typeof module !== "undefined") module.exports = Arrange;

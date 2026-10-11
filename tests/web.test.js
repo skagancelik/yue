@@ -183,6 +183,22 @@ test("borrowChords puts another extraction's chords into an edited score by time
   assert.deepStrictEqual(ScoreModel.voiceLine(model, "vocal").notes, ScoreModel.voiceLine(ScoreModel.parse(mine), "vocal").notes, "the notes stay");
 });
 
+test("suggestChords harmonizes a melody in its key, from the notes alone", () => {
+  const score = (key, vocal) => `X:1\nL:1/8\nM:4/4\nQ:1/4=100\nK:${key}\n% verse\nV: Vocal\n${vocal}\nV: Ins\n${"z8|".repeat(vocal.split("|").length - 1)}\n`;
+  const names = (abc) => ScoreModel.chordLine(ScoreModel.parse(abc)).map((c) => `${c.u}:${c.name}`).join(" ");
+  const c = Arrange.suggestChords(score("C", "c2e2g2e2|f2a2c'2a2|g2b2d'2b2|c'8|"));
+  assert.strictEqual(c.key, "C");
+  assert.strictEqual(names(c.abc), "0:C 8:F 16:G 24:C");
+  // Written with Eb's signature, but the melody circles F, A♭ and C: the key is F minor, spelled with flats.
+  const fm = Arrange.suggestChords(score("Eb", "F2A2c2A2|F2A2c2f2|G2B2d2B2|e2c2A2F2|F2A2c2A2|F8|"));
+  assert.strictEqual(fm.key, "Fm");
+  const used = new Set(ScoreModel.chordLine(ScoreModel.parse(fm.abc)).map((x) => x.name));
+  assert.ok(used.has("Fm") && [...used].every((n) => ["Fm", "Ab", "Bbm", "C", "Cm", "Db", "Eb"].includes(n)), [...used].join(","));
+  assert.ok(names(fm.abc).startsWith("0:Fm") && names(fm.abc).endsWith(":Fm"), names(fm.abc));
+  // The notes are untouched.
+  assert.deepStrictEqual(ScoreModel.voiceLine(ScoreModel.parse(c.abc), "vocal").notes.length, 13);
+});
+
 test("scopeText names sections and bars", () => {
   const model = ScoreModel.parse(ABC);
   const runs = ScoreModel.sections(model);
