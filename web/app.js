@@ -761,11 +761,42 @@ function showYuePreview(compiled, title, unsaved) {
   $("yp-style").textContent = compiled.style || "(stil boş)";
   $("yp-lyrics").textContent = compiled.lyrics || "(söz yok)";
   $("yp-abc").textContent = compiled.abc;
+  // Besides these three the worker sends the planning mode (always "melody": the accompaniment is
+  // left to YuE2, see worker/agent.py) and the seed of each variant.
+  const seed = $("seed").value === "" ? null : Number($("seed").value), variants = Number($("variants").value);
+  const seeds = seed == null ? "rastgele" : variants === 2 ? `${seed} ve ${seed + 7919}` : String(seed);
+  $("yp-request").replaceChildren(...[
+    ["mod (cot)", "melody: YuE2 bu melodiyi söyler/çalar, eşliği (akorları, enstrümanları) kendisi uydurur"],
+    ["tohum (seed)", `${seeds}${variants === 2 ? " (2 varyasyon, her biri ayrı istek)" : ""}`],
+    ["stil", `${compiled.style.length} karakter`], ["söz", `${compiled.lyrics.length} karakter`], ["nota", `${compiled.abc.split("\n").length} satır`],
+  ].map(([k, v]) => { const row = document.createElement("div"); row.append(Object.assign(document.createElement("b"), { textContent: `${k}: ` }), v); return row; }));
+  previewRequest = { style: compiled.style, lyrics: compiled.lyrics, abc: compiled.abc, cot: "melody", seed };
+  $("yp-copied").textContent = "";
+  $("yp-json").classList.add("hidden");
   $("yp-note").textContent = (compiled.style.length > 2000 ? "⚠ Stil 2000 karakterden uzun; kısaltman gerekir. " : "")
     + (unsaved ? "Kaydedilmemiş değişiklikler de dahil. " : "")
     + "Düzenleme yap'a basınca bunlar gönderilir; bestenin kendi notası değişmez.";
   $("yue-preview").showModal();
 }
+let previewRequest = null;
+$("yp-copy").addEventListener("click", async () => {
+  const text = JSON.stringify(previewRequest, null, 2);
+  $("yp-json").classList.add("hidden");
+  try {
+    await navigator.clipboard.writeText(text);
+    $("yp-copied").textContent = "Kopyalandı.";
+    return;
+  } catch (_) { /* the older way, then by hand */ }
+  const box = $("yp-json");
+  box.value = text;
+  box.classList.remove("hidden");
+  box.focus();
+  box.select();
+  let copied = false;
+  try { copied = document.execCommand("copy"); } catch (_) { copied = false; }
+  $("yp-copied").textContent = copied ? "Kopyalandı." : "Tarayıcı panoya yazmaya izin vermedi; aşağıda seçili duruyor, ⌘C ile kopyala.";
+  if (copied) box.classList.add("hidden");
+});
 $("yp-close").addEventListener("click", () => $("yue-preview").close());
 $("yue-preview").addEventListener("click", (event) => { if (event.target === $("yue-preview")) $("yue-preview").close(); });
 $("variants").addEventListener("change", updateCreate);

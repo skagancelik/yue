@@ -124,6 +124,20 @@ test("compile renames score sections after where the lyrics were put", () => {
   assert.ok(out.lyrics.startsWith("[Chorus]\n") && out.lyrics.includes("\n[Verse]\n"));
 });
 
+test("compile names empty lyric tags like the unsung bars of the score where they are", () => {
+  const tl = Timeline.build(ABC);
+  const words = "[Verse]\nsevdim seni deli gibi gel artık\n\n[Chorus]\ngel gör beni aşkın";
+  const lyrics = `[Giriş]\n\n${words.replace("\n\n[Chorus]", "\n\n[Solo]\n\n[Chorus]")}\n\n[Instrumental]\n`;
+  const map = Align.autoAlign(tl, lyrics);
+  const out = Arrange.compile({ abc: ABC, lyrics, map, tracks: [], style: "pop" });
+  const labels = ScoreModel.sections(ScoreModel.parse(out.abc)).map((r) => r.label);
+  assert.deepStrictEqual(labels, ["intro", "verse", "chorus", "outro"]);
+  assert.ok(out.lyrics.startsWith("[Intro]\n\n[Verse]\n"), out.lyrics);
+  assert.ok(out.lyrics.endsWith("\n\n[Outro]"), "[Instrumental] after the singing is the outro");
+  // No interlude bars in this score: an empty tag between sung ones keeps its own name.
+  assert.ok(out.lyrics.includes("\n[Solo]\n"), out.lyrics);
+});
+
 test("scopeText names sections and bars", () => {
   const model = ScoreModel.parse(ABC);
   const runs = ScoreModel.sections(model);

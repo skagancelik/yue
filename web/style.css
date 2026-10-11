@@ -514,3 +514,7 @@ body.has-player { padding-bottom: 88px; }
 .design-form { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .design-form input { flex: 1 1 160px; width: auto; }
 .design-form select { flex: 1 1 220px; width: auto; }
+.yp-request { display: grid; gap: 2px; font-size: 13px; }
+.yp-request b { font-weight: 600; }
+.yp-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.yp-json { margin-top: 8px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }

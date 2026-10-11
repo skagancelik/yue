@@ -229,11 +229,24 @@ const Arrange = (() => {
     return labels;
   }
 
-  // The lyrics with their tags named like the score's sections; everything else as written.
-  function retag(lyrics) {
-    return lyrics.split("\n").map((line) => {
+  // The lyrics with their tags named like the score's sections; everything else as written. A tag
+  // with no words under it ([Instrumental], [Solo] …) stands for bars the score names intro,
+  // interlude or outro by where they are, so it takes that name when the score has it.
+  function retag(lyrics, labels = []) {
+    const lines = lyrics.split("\n");
+    const isTag = (line) => /^\[[^\]]+\]$/.test(line.trim());
+    const sung = lines.map((line) => !isTag(line) && /\p{L}/u.test(line));
+    const firstSung = sung.indexOf(true), lastSung = sung.lastIndexOf(true);
+    const have = new Set(labels.filter(Boolean));
+    return lines.map((line, i) => {
       const tag = line.trim().match(/^\[([^\]]+)\]$/);
       if (!tag) return line;
+      let next = lines.findIndex((l, j) => j > i && isTag(l));
+      if (next < 0) next = lines.length;
+      if (firstSung >= 0 && !sung.slice(i + 1, next).some(Boolean)) {
+        const place = i < firstSung ? "intro" : i > lastSung ? "outro" : "interlude";
+        if (have.has(place)) return `[${tagText(place)}]`;
+      }
       const name = canon(tag[1]);
       return name ? `[${tagText(name)}]` : line;
     }).join("\n").replace(/\n{3,}/g, "\n\n").trim();
@@ -283,7 +296,7 @@ const Arrange = (() => {
       const labels = sectionLabels(tl, map, sylls, lyricSecs, sungNotes(map, sylls, tl), report);
       if (labels) {
         model = { ...model, bars: model.bars.map((bar, b) => ({ ...bar, labels: labels[b] ? [labels[b]] : [] })) };
-        outLyrics = retag(lyrics);
+        outLyrics = retag(lyrics, labels);
       } else if (lyricSecs.some((s) => !s.name)) {
         report.push({ kind: "warn", text: "Sözde bölüm etiketi ([Verse], [Chorus]…) olmayan dizeler var; notadaki bölümler olduğu gibi bırakıldı." });
       }
