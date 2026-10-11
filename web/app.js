@@ -731,6 +731,7 @@ function updateCreate() {
     : `GPU kapalı · açılış ~3 dk + düzenleme ~1–3 dk${variants === 2 ? " (2 varyasyon birlikte)" : ""}`;
   const design = selectedDesign();
   $("create-note").textContent += design ? ` · eser tasarımı «${design.name}» ile` : " · ses kaydından";
+  if (instrumentalChosen()) $("create-note").textContent += design ? " · 🎹 enstrümantal (söz gitmez)" : " · ⚠ enstrümantal için eser tasarımı seç";
 }
 
 const selectedItem = () => source && source.id && sources.find((s) => s.id === source.id);
@@ -811,7 +812,9 @@ async function designAbc(design) {
 }
 
 // The timeline editor is the reference: the design's laid-out lyrics win over the form's.
-async function prepareDesign(design, style, lyrics = "") {
+const instrumentalChosen = () => $("gen-kind").value === "instrumental";
+
+async function prepareDesign(design, style, lyrics = "", instrumental = instrumentalChosen()) {
   const abc = await designAbc(design);
   let map = null;
   const edited = editorLyrics(design);
@@ -819,7 +822,8 @@ async function prepareDesign(design, style, lyrics = "") {
     lyrics = edited;
     try { map = Timeline.mapFromOnsets(Timeline.build(abc), design.lyrics_layout.at); } catch (error) { map = null; }
   } else lyrics = lyrics || design.lyrics || "";
-  return Arrange.compile({ abc, lyrics, map, tracks: design.tracks || [], style, chords: design.harmony !== "free" });
+  const compiled = Arrange.compile({ abc, lyrics, map, tracks: design.tracks || [], style, chords: design.harmony !== "free" });
+  return instrumental ? Arrange.instrumentalVersion(compiled) : compiled;
 }
 
 // How many chords a design's score has (null until its score is read; the panels redraw then).
@@ -903,6 +907,7 @@ $("yp-copy").addEventListener("click", async () => {
 $("yp-close").addEventListener("click", () => $("yue-preview").close());
 $("yue-preview").addEventListener("click", (event) => { if (event.target === $("yue-preview")) $("yue-preview").close(); });
 $("variants").addEventListener("change", updateCreate);
+$("gen-kind").addEventListener("change", updateCreate);
 
 $("create").addEventListener("click", async () => {
   $("create-error").textContent = "";
@@ -921,12 +926,15 @@ $("create").addEventListener("click", async () => {
     // An eser tasarımı: its score sent prepared (lyrics laid on it, unsung bars to the instrument,
     // sections named after the lyrics, tracks in the style). Without one Turbo works from the audio.
     const design = selectedDesign();
+    if (instrumentalChosen() && !design) throw new Error("Enstrümantal için bir eser tasarımı seç (\"Bununla düzenle\"); melodi ve akorlar ondan alınır");
     if (design) {
       body.design_id = design.id;
       const compiled = await prepareDesign(design, body.style, body.lyrics);
       if (compiled.style.length > 2000) throw new Error("İzlerle birlikte stil 2000 karakteri aşıyor; stili ya da iz açıklamalarını kısalt");
       Object.assign(body, { abc: compiled.abc, lyrics: compiled.lyrics, style: compiled.style, style_base: body.style,
         lyrics_layout: { at: compiled.at }, cot: compiled.cot });
+      // Nothing is sung, so there is nothing to separate.
+      if (compiled.instrumental) Object.assign(body, { instrumental: true, stems: false, lyrics_layout: undefined });
     }
     const result = await api("/jobs", { method: "POST", body: JSON.stringify(body) });
     jobs = [...result.jobs, ...jobs];
@@ -1217,7 +1225,7 @@ function fillJob(node, job) {
   const from = job.design_name ? ` · 🎼 eser tasarımı «${job.design_name}»${job.cot === "full" ? " · akorlarıyla" : ""}`
     : { prepared: " · 🎛 hazırlanmış nota", edited: " · 🎼 düzeltilmiş nota", transcript: " · 🎼 çıkarılmış nota" }[job.score_from] || (job.status ? " · 🎧 ses kaydından" : "");
   const meta = node.querySelector(".meta");
-  meta.textContent = fmtAgo(job.created_at) + from + (job.cfg_scale ? ` · stile bağlılık ${job.cfg_scale}` : "");
+  meta.textContent = fmtAgo(job.created_at) + from + (job.instrumental ? " · 🎹 enstrümantal" : "") + (job.cfg_scale ? ` · stile bağlılık ${job.cfg_scale}` : "");
   if (job.seed != null) {
     // The seed, to make the same arrangement again with one setting changed.
     const seed = document.createElement("button");
@@ -1647,6 +1655,7 @@ function reuse(job) {
   $("style").value = job.style_base || job.style;
   $("lyrics").value = job.lyrics;
   $("cfg-scale").value = job.cfg_scale ? String(job.cfg_scale) : "";
+  $("gen-kind").value = job.instrumental ? "instrumental" : "song";
   // What was sent is the compiled lyrics; a design laid out in the timeline keeps the editor's.
   if (design && editorLyrics(design)) $("lyrics").value = editorLyrics(design);
   updateCreate();

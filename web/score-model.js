@@ -1031,6 +1031,33 @@ const ScoreModel = (() => {
     return { offGrid: off, notes: notes.length, meterChanges: units.filter((n) => n !== m).length };
   }
 
+  // The vocal melody handed to the instrument voice, for an instrumental version: the Ins voice
+  // gets every vocal note and keeps its own notes only where the vocal is silent (cut around the
+  // vocal's notes); the Vocal voice rests. Chords stay where they are. { model, moved, cut }.
+  function melodyToIns(model) {
+    const vocal = voiceLine(model, "vocal").notes, ins = voiceLine(model, "ins").notes;
+    let cut = 0;
+    const kept = ins.flatMap((n) => {
+      let parts = [{ ...n }];
+      for (const v of vocal) {
+        const a = v.u0, b = v.u0 + v.dur;
+        parts = parts.flatMap((p) => {
+          const s = p.u0, e = p.u0 + p.dur;
+          if (e <= a || s >= b) return [p];
+          const out = [];
+          if (s < a) out.push({ ...p, dur: a - s });
+          if (e > b) out.push({ ...p, u0: b, dur: e - b });
+          return out;
+        });
+      }
+      if (parts.length !== 1 || parts[0].dur !== n.dur) cut++;
+      return parts;
+    });
+    let out = writeLine(model, "ins", [...vocal, ...kept]);
+    out = writeLine(out, "vocal", []);
+    return { model: out, moved: vocal.length, cut };
+  }
+
   // Both: one meter, then the grid. { model, fixed, barMap, moved }.
   function tidy(model) {
     const even = evenMeter(model);
@@ -1044,7 +1071,7 @@ const ScoreModel = (() => {
   }
 
   return { parse, serialize, sections, sectionOf, setSection, swapVoices, tieSafeRange,
-    voiceNotes, editNote, moveNote, voiceLine, writeLine, chordLine, placeChords, hasChords, withoutChords, keyInfo, tidy, evenMeter, quantize, gridCheck, shiftFrom, resizeNote, insertBefore, removeNotes, clipNotes, pasteNotes, moveNotes, writeBar, pitchName, unitDenominator: (m) => Number((headerField(m, "L").split("/")[1]) || 8) };
+    voiceNotes, editNote, moveNote, voiceLine, writeLine, chordLine, placeChords, hasChords, withoutChords, keyInfo, tidy, melodyToIns, evenMeter, quantize, gridCheck, shiftFrom, resizeNote, insertBefore, removeNotes, clipNotes, pasteNotes, moveNotes, writeBar, pitchName, unitDenominator: (m) => Number((headerField(m, "L").split("/")[1]) || 8) };
 })();
 
 if (typeof module !== "undefined") module.exports = ScoreModel;
