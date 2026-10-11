@@ -6,9 +6,10 @@
 //
 // - Vocal notes no syllable sits on would be hummed, so bars that only have such notes (and no
 //   instrument notes) go to the Ins voice: the instrument plays that melody instead.
-// - The score's sections ("% verse") are named after the lyric sections laid on them, in the same
-//   order, with "intro", "interlude" and "outro" for the bars without lyrics around them; the lyric
-//   tags get the same names ([Verse]). YuE2 matches the two by name and order.
+// - The sections come from the timeline: the score's section names ("% verse"), their edges moved
+//   to where the singing starts and stops, and the lyrics regrouped under the same tags ([Verse])
+//   by which section each syllable is sung in; the tags written in the lyrics are not used. YuE2
+//   matches the two by name and order.
 // - The tracks (an instrument, how it plays, in which bars) become phrases of the style text, with
 //   the score's tempo: "energetic strings in the choruses, soft piano throughout, 92 BPM".
 //
@@ -104,21 +105,28 @@ const Arrange = (() => {
   // ---- score + lyrics
 
   // Notes the lyrics sing: every note with a syllable, the empty notes between two syllables of one
-  // lyric section (a syllable held over them), and the notes that go on without a breath after a
-  // syllable until the next one (a melisma, often the long last note of a line).
-  function sungNotes(map, sylls, tl) {
+  // phrase (a syllable held over them), and the notes that go on without a breath after a
+  // syllable until the next one (a melisma, often the long last note of a line). melisma: per
+  // syllable, how many of the notes after its own it is sung over, set in the timeline (null =
+  // decided as above); never past the next syllable's note.
+  function sungNotes(map, sylls, tl, melisma = null) {
     const sung = new Set();
     const phraseOf = new Map();
     Align.phrases(tl).forEach((p, k) => p.notes.forEach((n) => phraseOf.set(n, k)));
     const placed = map.map((n, g) => ({ n, g })).filter((x) => x.n != null);
-    // After a section's last syllable the phrase may go on as a hum: only a short melisma (up to
+    // After a phrase's last syllable the phrase may go on as a hum: only a short melisma (up to
     // three notes inside one bar) still belongs to the syllable.
     const barUnits = tl.bars.length ? tl.bars[0].u1 - tl.bars[0].u0 : Infinity;
     placed.forEach(({ n, g }, i) => {
       sung.add(n);
       const next = placed[i + 1];
       const end = next ? next.n : tl.vocal.length;
-      const same = next && sylls[next.g].section === sylls[g].section;
+      const set = melisma && Number.isInteger(melisma[g]) ? melisma[g] : null;
+      if (set != null) {
+        for (let x = n + 1; x < end && x <= n + set; x++) sung.add(x);
+        return;
+      }
+      const same = next && phraseOf.get(next.n) === phraseOf.get(n);
       for (let x = n + 1, tail = 0; x < end; x++) {
         if (!same && (phraseOf.get(x) !== phraseOf.get(n) || ++tail > 3 || tl.vocal[x].u0 - tl.vocal[n].u0 >= barUnits)) break;
         sung.add(x);
@@ -190,66 +198,128 @@ const Arrange = (() => {
     return { model: { ...model, bars }, moved };
   }
 
-  // Score section names from where the lyric sections were laid. Returns the new bar labels or null.
-  function sectionLabels(tl, map, sylls, lyricSecs, sung, report) {
-    const secs = lyricSecs.map((sec, k) => {
-      const notes = map.filter((n, g) => n != null && sylls[g].section === k);
-      if (!notes.length) return null;
-      // The section ends with its last syllable's melisma, before the next section's first syllable.
-      const next = Math.min(tl.vocal.length, ...map.filter((n, g) => n != null && sylls[g].section > k));
-      let end = Math.max(...notes);
-      while (end + 1 < next && sung.has(end + 1)) end++;
-      const first = tl.vocal[Math.min(...notes)], last = tl.vocal[end];
-      const endBar = tl.bars.findIndex((bar) => last.u1 - 1 < bar.u1);
-      return { k, name: canon(sec.tag || sec.name), start: first.bar, end: endBar < 0 ? tl.bars.length - 1 : endBar };
-    }).filter(Boolean);
-    if (!secs.length || secs.some((s) => !s.name)) return null;
-    const kept = [];
-    for (const sec of secs) {
-      const prev = kept[kept.length - 1];
-      // A pickup: the section's first syllables share a bar with the last ones of the section before.
-      if (prev && sec.start <= prev.end) sec.start = prev.end + 1;
-      if (sec.start > sec.end) {
-        report.push({ kind: "warn", text: `${tagText(sec.name)}: bütün heceleri önceki bölümle aynı ölçülerde; notada ayrı bölüm olamadı.` });
-        if (prev) prev.end = Math.max(prev.end, sec.end);
-        continue;
+  // ---- sections: all from the timeline
+  // What YuE2 is told is intro, verse, chorus … comes from the timeline alone: the score's bar
+  // labels (the Bölüm lane) and the syllables on notes; the tags written in the lyrics are not
+  // used. Edges between a sung and an unsung section follow the singing: a pickup sung in the last
+  // bar of an unsung section starts the sung one there, unsung bars at the end of a sung section
+  // go to the unsung one after it (at its start, to the one before). Unsung bars before the first
+  // and after the last sung section are intro and outro, two or more between two sung ones an
+  // interlude.
+
+  // Bars something is sung in: where a sung note starts, and the bars it holds over for at least half.
+  function sungBars(tl, sung) {
+    const bars = new Set();
+    for (const n of sung) {
+      const note = tl.vocal[n];
+      if (!note) continue;
+      for (const b of barsOf(tl, note.u0, note.u1)) {
+        const bar = tl.bars[b];
+        if (b === note.bar || (Math.min(note.u1, bar.u1) - Math.max(note.u0, bar.u0)) * 2 >= bar.u1 - bar.u0) bars.add(b);
       }
-      kept.push(sec);
     }
-    const labels = new Array(tl.bars.length).fill(null);
-    if (kept[0].start > 0) labels[0] = "intro";
-    kept.forEach((sec, i) => {
-      labels[sec.start] = sec.name;
-      const next = kept[i + 1];
-      const gapEnd = next ? next.start - 1 : tl.bars.length - 1;
-      const gap = gapEnd - sec.end;
-      if (!next && gap >= 1) labels[sec.end + 1] = "outro";
-      else if (next && gap >= 2) labels[sec.end + 1] = "interlude";
-    });
-    return labels;
+    return bars;
   }
 
-  // The lyrics with their tags named like the score's sections; everything else as written. A tag
-  // with no words under it ([Instrumental], [Solo] …) stands for bars the score names intro,
-  // interlude or outro by where they are, so it takes that name when the score has it.
-  function retag(lyrics, labels = []) {
-    const lines = lyrics.split("\n");
-    const isTag = (line) => /^\[[^\]]+\]$/.test(line.trim());
-    const sung = lines.map((line) => !isTag(line) && /\p{L}/u.test(line));
-    const firstSung = sung.indexOf(true), lastSung = sung.lastIndexOf(true);
-    const have = new Set(labels.filter(Boolean));
-    return lines.map((line, i) => {
-      const tag = line.trim().match(/^\[([^\]]+)\]$/);
-      if (!tag) return line;
-      let next = lines.findIndex((l, j) => j > i && isTag(l));
-      if (next < 0) next = lines.length;
-      if (firstSung >= 0 && !sung.slice(i + 1, next).some(Boolean)) {
-        const place = i < firstSung ? "intro" : i > lastSung ? "outro" : "interlude";
-        if (have.has(place)) return `[${tagText(place)}]`;
-      }
-      const name = canon(tag[1]);
-      return name ? `[${tagText(name)}]` : line;
-    }).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  // Section names that mean the instruments play there.
+  const PLAYED = new Set(["intro", "outro", "interlude", "solo", "instrumental", "break", "breakdown", "bridge", "drop"]);
+
+  // [{ label, from, to, sung }]: the sections the arrangement sends; sung = something is sung there.
+  function songSections(tl, model, sung) {
+    const on = sungBars(tl, sung);
+    const anySung = (a, z) => { for (let b = a; b <= z; b++) if (on.has(b)) return true; return false; };
+    const runs = ScoreModel.sections(model).map((run) => ({ label: canon(run.label), from: run.from, to: run.to }));
+    // A pickup: an unsung section's only sung bar is its last, before a sung section.
+    for (let k = 0; k + 1 < runs.length; k++) {
+      const a = runs[k], b = runs[k + 1];
+      if (on.has(a.to) && !anySung(a.from, a.to - 1) && anySung(b.from, b.to)) { b.from = a.to; a.to--; }
+    }
+    for (let k = 0; k + 1 < runs.length; k++) {
+      const a = runs[k], b = runs[k + 1];
+      if (a.from > a.to) continue;
+      const aSung = anySung(a.from, a.to), bSung = anySung(b.from, b.to);
+      if (aSung && !bSung) while (a.to > a.from && !on.has(a.to)) { a.to--; b.from--; }
+      if (!aSung && bSung) while (b.from < b.to && !on.has(b.from)) { b.from++; a.to++; }
+    }
+    const out = runs.filter((run) => run.from <= run.to).map((run) => ({ ...run, sung: anySung(run.from, run.to) }));
+    // Two bars or more played between two sung sections are an interlude.
+    for (let k = 0; k + 1 < out.length; k++) {
+      const a = out[k], b = out[k + 1];
+      if (!a.sung || !b.sung) continue;
+      let z = a.to, f = b.from;
+      while (!on.has(z)) z--;
+      while (!on.has(f)) f++;
+      if (f - z - 1 < 2) continue;
+      out.splice(k + 1, 0, { label: "interlude", from: z + 1, to: f - 1, sung: false });
+      a.to = z;
+      b.from = f;
+      k++;
+    }
+    const firstSung = out.findIndex((run) => run.sung);
+    if (firstSung >= 0) {
+      const first = out[firstSung];
+      let f = first.from;
+      while (!on.has(f)) f++;
+      if (f > first.from) { out.splice(firstSung, 0, { label: "intro", from: first.from, to: f - 1, sung: false }); first.from = f; }
+      const lastSung = out.length - 1 - [...out].reverse().findIndex((run) => run.sung);
+      const last = out[lastSung];
+      let z = last.to;
+      while (!on.has(z)) z--;
+      if (z < last.to) { out.splice(lastSung + 1, 0, { label: "outro", from: z + 1, to: last.to, sung: false }); last.to = z; }
+    }
+    // Sung bars without a name are a verse. Bars nothing is sung in keep an instrumental name
+    // (solo, bridge …); any other (a chorus left without its words) is named by where it is.
+    const first = out.findIndex((run) => run.sung), last = out.length - 1 - [...out].reverse().findIndex((run) => run.sung);
+    out.forEach((run, k) => {
+      if (run.sung) run.label = run.label || "verse";
+      else if (!PLAYED.has(run.label)) run.label = first < 0 || k < first ? "intro" : k > last ? "outro" : "interlude";
+    });
+    // Unsung neighbours with one name are one section.
+    return out.reduce((all, run) => {
+      const prev = all[all.length - 1];
+      if (prev && !prev.sung && !run.sung && prev.label === run.label) prev.to = run.to; else all.push(run);
+      return all;
+    }, []);
+  }
+
+  // The section (an index into sections) every syllable is sung in; one on no note goes with the
+  // syllable before it (or, at the start, the one after).
+  function syllableSections(sylls, map, tl, sections) {
+    const ofBar = [];
+    sections.forEach((run, k) => { for (let b = run.from; b <= run.to; b++) ofBar[b] = k; });
+    const of = map.map((n) => (n != null && tl.vocal[n] ? ofBar[tl.vocal[n].bar] : null));
+    for (let g = 1; g < of.length; g++) if (of[g] == null) of[g] = of[g - 1];
+    for (let g = of.length - 2; g >= 0; g--) if (of[g] == null) of[g] = of[g + 1];
+    return of.map((k) => k ?? 0);
+  }
+
+  const withSections = (model, sections) => {
+    const starts = new Map(sections.map((run) => [run.from, run.label]));
+    return { ...model, bars: model.bars.map((bar, b) => ({ ...bar, labels: starts.has(b) ? [starts.get(b)] : [] })) };
+  };
+
+  // The lyrics YuE2 reads: the syllables of every sung section under its tag, in the score's
+  // order, with the words, punctuation and line breaks as written.
+  function songLyrics(lyrics, sylls, of, sections) {
+    const parts = sections.map(() => null);
+    sylls.forEach((syl, g) => {
+      const k = of[g];
+      if (parts[k] == null) { parts[k] = syl.text; return; }
+      const gap = lyrics.slice(sylls[g - 1].to, syl.from);
+      parts[k] += (gap.includes("\n") ? "\n" : gap) + syl.text;
+    });
+    return sections.map((run, k) => (parts[k] == null ? null : `[${tagText(run.label)}]\n${parts[k].trim()}`)).filter(Boolean).join("\n\n");
+  }
+
+  // The sections compile will send, for the timeline to show: { sections: [{ label, from, to,
+  // sung, t0, t1 }], of: the section of every syllable }; null without syllables.
+  function plannedSections(tl, model, lyrics, map, melisma = null) {
+    const sylls = LyricsLayout.allSyllables(lyrics);
+    if (!sylls.length || !Array.isArray(map) || map.length !== sylls.length) return null;
+    if (!Array.isArray(melisma) || melisma.length !== sylls.length) melisma = null;
+    const sections = songSections(tl, model, sungNotes(map, sylls, tl, melisma))
+      .map((run) => ({ ...run, t0: tl.bars[run.from].t0, t1: tl.bars[run.to].t1 }));
+    return { sections, of: syllableSections(sylls, map, tl, sections) };
   }
 
   // abc: the score; lyrics: the lyrics (with corrected letters); map: the note of every syllable on
@@ -257,7 +327,7 @@ const Arrange = (() => {
   // style as written; chords: false to leave the score's chords out (the accompaniment is then
   // YuE2's own). Returns { abc, lyrics, style, cot, chords, at, map, report, structure }: cot is
   // "full" when chords go with the score (YuE2 plays to them), else "melody".
-  function compile({ abc, lyrics, map, tracks = [], style = "", chords = true, options = {} }) {
+  function compile({ abc, lyrics, map, melisma = null, tracks = [], style = "", chords = true, options = {} }) {
     const opts = { instrumentalize: true, sections: true, bpm: true, ...options };
     const report = [];
     let model = ScoreModel.parse(abc);
@@ -271,36 +341,39 @@ const Arrange = (() => {
     const cot = had && chords ? "full" : "melody";
     const grid = ScoreModel.gridCheck(model);
     if (grid.notes && grid.offGrid / grid.notes > 0.2) {
-      report.push({ kind: "warn", text: `Vokal notalarının ${grid.offGrid}/${grid.notes} tanesi vuruş dışında başlıyor; YuE2 melodiyi kaymış, aksak duyar. Zaman çizgisinde "🧲 Notaları hizala" ile düzelt.` });
+      report.push({ kind: "warn", text: `Vokal notalarının ${grid.offGrid}/${grid.notes} tanesi vuruş dışında başlıyor; YuE2 melodiyi kaymış, aksak duyar. Zaman çizgisinde "Notaları hizala" ile düzelt.` });
     }
     if (grid.meterChanges) {
-      report.push({ kind: "warn", text: `Notada ${grid.meterChanges} ölçü şarkının ölçüsünden farklı (ör. 4/4 içinde 2/4); ritim orada takılır. "🧲 Notaları hizala" bunu da düzeltir.` });
+      report.push({ kind: "warn", text: `Notada ${grid.meterChanges} ölçü şarkının ölçüsünden farklı (ör. 4/4 içinde 2/4); ritim orada takılır. "Notaları hizala" bunu da düzeltir.` });
     }
     let tl = Timeline.fromModel(model);
     const sylls = LyricsLayout.allSyllables(lyrics);
     if (!Array.isArray(map) || map.length !== sylls.length) {
       map = Align.autoAlign(tl, lyrics);
+      melisma = null;
       if (sylls.length) report.push({ kind: "warn", text: "Bu söz için kayıtlı hece yerleşimi yok; heceler otomatik yerleştirildi. Zaman çizgisinde kontrol etmek daha iyi sonuç verir." });
     }
+    // A melisma counts notes after a syllable's own: the ones it is sung over stay in Vocal, in order.
+    if (!Array.isArray(melisma) || melisma.length !== sylls.length) melisma = null;
     const loose = map.filter((n) => n == null).length;
     if (loose) report.push({ kind: "warn", text: `${loose} hece hiçbir notaya yerleşmemiş; YuE2 onları kendi yerleştirir.` });
 
     if (opts.instrumentalize && sylls.length) {
       const at = Timeline.onsets(tl, map);
-      const done = instrumentalize(model, tl, sungNotes(map, sylls, tl), report);
+      const done = instrumentalize(model, tl, sungNotes(map, sylls, tl, melisma), report);
       if (done.moved) {
         model = done.model;
         tl = done.after;
         map = Timeline.mapFromOnsets(tl, at);
       }
-      const rest = handOff(model, tl, sungNotes(map, sylls, tl), report);
+      const rest = handOff(model, tl, sungNotes(map, sylls, tl, melisma), report);
       if (rest.moved) {
         model = rest.model;
         tl = Timeline.fromModel(model);
         map = Timeline.mapFromOnsets(tl, at);
       }
     }
-    const sungNow = sungNotes(map, sylls, tl);
+    const sungNow = sungNotes(map, sylls, tl, melisma);
     const still = tl.vocal.filter((n) => !sungNow.has(n.number));
     if (sylls.length && still.length) {
       const bars = [...new Set(still.map((n) => n.bar + 1))];
@@ -309,20 +382,15 @@ const Arrange = (() => {
 
     let outLyrics = lyrics.trim();
     if (opts.sections && sylls.length) {
-      const lyricSecs = LyricsLayout.lyricSections(lyrics);
-      const labels = sectionLabels(tl, map, sylls, lyricSecs, sungNotes(map, sylls, tl), report);
-      if (labels) {
-        model = { ...model, bars: model.bars.map((bar, b) => ({ ...bar, labels: labels[b] ? [labels[b]] : [] })) };
-        outLyrics = retag(lyrics, labels);
-      } else if (lyricSecs.some((s) => !s.name)) {
-        report.push({ kind: "warn", text: "Sözde bölüm etiketi ([Verse], [Chorus]…) olmayan dizeler var; notadaki bölümler olduğu gibi bırakıldı." });
-      }
+      const sections = songSections(tl, model, sungNotes(map, sylls, tl, melisma));
+      model = withSections(model, sections);
+      outLyrics = songLyrics(lyrics, sylls, syllableSections(sylls, map, tl, sections), sections);
     }
     const out = ScoreModel.serialize(model).text;
     tl = Timeline.build(out);
     const structure = ScoreModel.sections(model).map((run) => ({ label: run.label, from: run.from, to: run.to, sung: run.sung }));
     const finalStyle = composeStyle(style, tracks, model, opts);
-    return { abc: out, lyrics: outLyrics, style: finalStyle, cot, chords: cot === "full" ? had : 0, at: Timeline.onsets(tl, map), map, report, structure };
+    return { abc: out, lyrics: outLyrics, style: finalStyle, cot, chords: cot === "full" ? had : 0, at: Timeline.onsets(tl, map), map, melisma, report, structure };
   }
 
   // An instrumental version of a compiled request: no words are sent, the melody the lyrics would
@@ -456,7 +524,7 @@ const Arrange = (() => {
     return { abc: ScoreModel.serialize(out).text, count: line.length, key: key.name };
   }
 
-  return { compile, instrumentalVersion, borrowChords, suggestChords, sungNotes, composeStyle, trackPhrase, scopeText, canon, tagText, INSTRUMENTS, FEELS, feelLabel, instrumentLabel };
+  return { compile, plannedSections, syllableSections, instrumentalVersion, borrowChords, suggestChords, sungNotes, composeStyle, trackPhrase, scopeText, canon, tagText, INSTRUMENTS, FEELS, feelLabel, instrumentLabel };
 })();
 
 if (typeof module !== "undefined") module.exports = Arrange;

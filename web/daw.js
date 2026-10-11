@@ -68,6 +68,7 @@ async function openDesignDaw(item, design, lyrics = design.lyrics || "") {
       ctx: "source", job: null, item, abc, lyrics, title: `${item.name} · ${design.name}`,
       origin: `eser tasarımı «${design.name}»`,
       map: layoutMap(abc, lyrics, own && design.lyrics_layout ? LyricsLayout.normalize(design.lyrics_layout) : null),
+      melisma: own && design.lyrics_layout && design.lyrics_layout.at ? design.lyrics_layout.melisma : null,
       tracks: JSON.parse(JSON.stringify(design.tracks || [])).map((t) => ({ ...t, id: t.id || dawId() })),
     });
     if (!opened) return;
@@ -88,7 +89,7 @@ async function fetchText(url, what) {
 
 const dawId = () => Math.random().toString(36).slice(2, 10);
 
-function startDaw({ ctx, job, item, origin, abc, lyrics, map, tracks, title }) {
+function startDaw({ ctx, job, item, origin, abc, lyrics, map, melisma = null, tracks, title }) {
   let model, tl;
   try {
     model = ScoreModel.parse(abc);
@@ -98,8 +99,8 @@ function startDaw({ ctx, job, item, origin, abc, lyrics, map, tracks, title }) {
     if (ctx === "job") $("score-status").textContent = message; else report(new Error(message));
     return false;
   }
-  Object.assign(daw, { ctx, job, item, origin, abc, model, tl, lyrics, map, tracks, history: [], sel: new Set(), marked: new Set(), anchor: null, tray: null,
-    note: null, bars: null, pos: 0, focus: null, scoreDirty: false, layoutDirty: false, tracksDirty: false, trackOpen: null, layoutFresh: false });
+  Object.assign(daw, { ctx, job, item, origin, abc, model, tl, lyrics, map, melisma, tracks, history: [], sel: new Set(), marked: new Set(), anchor: null, tray: null,
+    note: null, bars: null, pos: 0, focus: null, wordsKey: null, scoreDirty: false, layoutDirty: false, tracksDirty: false, trackOpen: null, layoutFresh: false });
   if (daw.map.length !== LyricsLayout.allSyllables(lyrics).length) daw.map = Align.autoAlign(tl, lyrics);
   // Zoom so a typical note is wide enough for its syllable.
   const lengths = tl.vocal.map((n) => n.t1 - n.t0).sort((a, b) => a - b);
@@ -158,6 +159,12 @@ function toRanges(on) {
   return out;
 }
 
+// The section a syllable is in: in a source song the score's (where it is sung), else its lyric tag.
+const sylSection = (g) => (daw.secOf ? daw.secOf[g] : daw.sylls[g].section);
+const sylSectionName = (g) => (daw.secOf ? Arrange.tagText(daw.sections[daw.secOf[g]].label)
+  : daw.words.sections[daw.sylls[g].section].tag || "söz");
+const sectionSyllables = (k) => daw.sylls.filter((s) => sylSection(s.index) === k).map((s) => s.index);
+
 function trackName(track) {
   return Arrange.instrumentLabel[track.instrument] || track.instrument || "enstrüman";
 }
@@ -169,7 +176,10 @@ function renderDaw() {
   daw.words = words;
   const sylls = LyricsLayout.allSyllables(daw.lyrics);
   daw.sylls = sylls;
-  daw.sung = sylls.length ? Arrange.sungNotes(daw.map, sylls, tl) : new Set();
+  // How many notes each syllable is sung over, where it was set by hand (null = automatic); an
+  // edit of the lyrics carries them over to the syllables it left as they were.
+  if (!Array.isArray(daw.melisma) || daw.melisma.length !== sylls.length) daw.melisma = sylls.map(() => null);
+  daw.sung = sylls.length ? Arrange.sungNotes(daw.map, sylls, tl, daw.melisma) : new Set();
   const width = dawX(tl.duration) + 40;
   const lanes = el("div", "daw-lanes", { width: width + "px" });
   daw.els = { notes: new Map(), sylls: new Map(), lanes };
@@ -183,13 +193,19 @@ function renderDaw() {
     if (b % barEvery === 0) ruler.append(el("div", "daw-barno", { left: dawX(bar.t0) + "px" }, String(b + 1)));
   });
 
-  // Score sections (what YuE2 is told is intro, verse, …); a click or a drag selects bars.
+  // Score sections (what YuE2 is told is intro, verse, …); a click or a drag selects bars. In a
+  // source song they are shown as the arrangement sends them: the score's names with their edges
+  // where the singing starts and stops, the lyrics grouped by them (their own tags are not used).
+  const planned = daw.ctx === "source" ? Arrange.plannedSections(tl, daw.model, daw.lyrics, daw.map, daw.melisma) : null;
+  daw.sections = planned ? planned.sections : tl.sections;
+  daw.secOf = planned ? planned.of : null;
   const sections = lane("Bölüm", 24, "daw-sections");
-  for (const section of tl.sections) {
+  for (const section of daw.sections) {
     const block = el("div", "daw-section" + (section.sung ? " sung" : ""), {
       left: dawX(section.t0) + "px", width: (section.t1 - section.t0) * daw.pps - 2 + "px",
-    }, `${section.label || "adsız"} ${section.sung ? "🎤" : "🎹"}`);
-    block.title = `Notadaki bölüm: ${section.label || "adsız"}, ölçü ${section.from + 1}–${section.to + 1} (${section.sung ? "söylenen" : "yalnız enstrüman"}). Tıkla ya da sürükle: ölçüleri seç`;
+    }, `${section.label || "adsız"} `);
+    block.append(Icons.node(section.sung ? "mic" : "piano"));
+    block.title = `${planned ? "YuE2'ye gidecek bölüm" : "Notadaki bölüm"}: ${section.label || "adsız"}, ölçü ${section.from + 1}–${section.to + 1} (${section.sung ? "söylenen" : "yalnız enstrüman"}). Tıkla ya da sürükle: ölçüleri seç`;
     block.dataset.from = section.from;
     block.dataset.to = section.to;
     sections.append(block);
@@ -252,14 +268,16 @@ function renderDaw() {
     roll.append(box);
   }
 
-  // Lyric sections: where each [Verse], [Chorus] … of the lyrics is sung; a click selects it.
-  const lyricLane = lane("Söz bölümü", 20, "daw-lyric-lane");
-  words.sections.forEach((section, k) => {
+  // Lyric sections: where each [Verse], [Chorus] … of the lyrics is sung; a click selects it. Not
+  // in a source song, whose lyrics take their sections from the score.
+  const lyricLane = daw.secOf ? null : lane("Söz bölümü", 20, "daw-lyric-lane");
+  if (lyricLane) words.sections.forEach((section, k) => {
     if (!section.placed) return;
     const t0 = tl.vocal[section.start].t0, t1 = tl.vocal[section.end - 1].t1;
     const missing = section.count - section.placed;
     const block = el("div", "daw-lyric-section", { left: dawX(t0) + "px", width: Math.max(20, (t1 - t0) * daw.pps - 2) + "px", background: dawSectionColor(k) },
-      `${section.tag || "söz"}${missing ? ` ⚠ ${missing}` : ""}`);
+      `${section.tag || "söz"}${missing ? " " : ""}`);
+    if (missing) block.append(Icons.node("triangle-alert"), String(missing));
     block.dataset.section = k;
     block.title = `${section.tag || "söz"}: ${section.count} hece${missing ? `, ${missing} hece notaya düşmüyor` : ""}. Tıkla: bu bölümün bütün hecelerini seç`;
     lyricLane.append(block);
@@ -271,22 +289,35 @@ function renderDaw() {
     const note = tl.vocal[n];
     if (!slot || !note) return;
     const w = (note.t1 - note.t0) * daw.pps;
-    if (slot.hold) { syl.append(el("div", "daw-hold", { left: dawX(note.t0) + "px", width: Math.max(2, w - 1) + "px" })); return; }
+    if (slot.hold) return;   // drawn below when the arrangement sings it
     slot.index.forEach((g, i) => {
       const part = w / slot.index.length;
       const block = el("div", "daw-syl" + (daw.sel.has(g) ? " selected" : "") + (sylls[g].joined ? " joined" : ""), {
-        left: dawX(note.t0) + i * part + "px", width: Math.max(14, part - 2) + "px", borderColor: dawSectionColor(sylls[g].section),
+        left: dawX(note.t0) + i * part + "px", width: Math.max(14, part - 2) + "px", borderColor: dawSectionColor(sylSection(g)),
       }, sylls[g].text);
       block.dataset.g = g;
-      block.title = `${sylls[g].text} · ${words.sections[sylls[g].section].tag || "söz"} · ölçü ${note.bar + 1}`;
+      block.title = `${sylls[g].text} · ${sylSectionName(g)} · ölçü ${note.bar + 1}`;
       syl.append(block);
       daw.els.sylls.set(g, block);
     });
   });
-  // Held syllables: the melisma line after a syllable's last note, up to the next one.
-  for (const n of daw.sung) {
-    const note = tl.vocal[n];
-    if (!words.slots[n] && note) syl.append(el("div", "daw-hold", { left: dawX(note.t0) + "px", width: Math.max(2, (note.t1 - note.t0) * daw.pps - 1) + "px" }));
+  // Held syllables: the melisma line on the notes a syllable is sung over (as the arrangement sends
+  // them), solid where it was set by hand. Its end has a grip: drag it to set how far the syllable
+  // is held, double-click it to leave that to the arrangement again.
+  const lastOn = new Map();   // note → the last syllable on it
+  daw.map.forEach((n, g) => { if (n != null) lastOn.set(n, g); });
+  for (const [n, g] of lastOn) {
+    let end = n;
+    while (daw.sung.has(end + 1) && !lastOn.has(end + 1)) end++;
+    const set = daw.melisma[g] != null;
+    for (let x = n + 1; x <= end; x++) {
+      const note = tl.vocal[x];
+      syl.append(el("div", "daw-hold" + (set ? " set" : ""), { left: dawX(note.t0) + "px", width: Math.max(2, (note.t1 - note.t0) * daw.pps - 1) + "px" }));
+    }
+    const grip = el("div", "daw-melisma" + (set ? " set" : ""), { left: dawX(tl.vocal[end].t1) - 5 + "px" });
+    grip.dataset.g = g;
+    grip.title = `«${sylls[g].text}» ${end - n + 1} notada söyleniyor${set ? "" : " (otomatik)"}. Sürükle: kaç notaya uzansın · çift tık: otomatiğe bırak`;
+    syl.append(grip);
   }
 
   lanes.append(...[ruler, sections, chordLane, roll, lyricLane, syl].filter(Boolean));
@@ -309,8 +340,8 @@ function renderDaw() {
       label.classList.add("daw-track-label");
       label.style.borderLeft = `4px solid ${dawTrackColor(k)}`;
       label.textContent = trackName(track);
-      label.title = `${Arrange.trackPhrase(track, ScoreModel.sections(daw.model), tl.bars.length)}\nTıkla: düzenle`;
-      for (const s of tl.sections) row.append(el("div", "daw-track-sep", { left: dawX(s.t0) + "px" }));
+      label.title = `${Arrange.trackPhrase(track, daw.sections, tl.bars.length)}\nTıkla: düzenle`;
+      for (const s of daw.sections) row.append(el("div", "daw-track-sep", { left: dawX(s.t0) + "px" }));
       const ranges = track.bars || [[0, tl.bars.length - 1]];
       ranges.forEach(([a, b], r) => {
         if (a >= tl.bars.length) return;
@@ -345,7 +376,7 @@ function renderDaw() {
   placePlayhead();
   renderDawTray();
   renderDawBar();
-  refreshDawWords();
+  if (daw.wordsKey !== wordsKey()) renderDawWords(); else refreshDawWords();
 }
 
 // A selection change only recolours: redrawing would replace the block under a double click.
@@ -369,7 +400,7 @@ function renderDawTray() {
   const chips = loose.slice(0, 80).map((g) => {
     const chip = el("button", "daw-loose" + (daw.tray === g || daw.sel.has(g) ? " on" : ""), null, sylls[g].text);
     chip.type = "button";
-    chip.title = `${daw.words.sections[sylls[g].section].tag || "söz"}: notaya düşmüyor. Tutup bir vokal notasının üstüne sürükle (ya da tıkla, sonra notaya tıkla); çift tıkla: harfleri düzelt.`;
+    chip.title = `${sylSectionName(g)}: notaya düşmüyor. Tutup bir vokal notasının üstüne sürükle (ya da tıkla, sonra notaya tıkla); çift tıkla: harfleri düzelt.`;
     // Dragged onto the timeline it goes on the note it is dropped on; a click picks it, and a
     // click on a vocal note then puts it there.
     chip.onpointerdown = (event) => {
@@ -397,14 +428,16 @@ function renderDawTray() {
 
 function renderDawWords() {
   const { lines, sylls } = Align.lyricLines(daw.lyrics);
-  const sections = LyricsLayout.lyricSections(daw.lyrics);
   const box = $("daw-words");
   const out = [];
   let section = -1;
+  daw.wordsKey = wordsKey();
   for (const line of lines) {
-    if (line.section !== section) {
-      section = line.section;
-      const head = el("div", "dw-section", { borderColor: dawSectionColor(section) }, sections[section].tag || "söz");
+    // In a source song the headings are the score's sections the lines are sung in.
+    const at = sylSection(line.gs[0]);
+    if (at !== section) {
+      section = at;
+      const head = el("div", "dw-section", { borderColor: dawSectionColor(section) }, sylSectionName(line.gs[0]));
       head.dataset.section = section;
       head.title = "Tıkla: bu bölümün bütün hecelerini seç";
       out.push(head);
@@ -429,10 +462,13 @@ function renderDawWords() {
     row.append(count);
     out.push(row);
   }
-  if (!lines.length) out.push(el("p", "muted small", null, "Bu bestenin sözü yok. ✎ Sözü yaz ile ekle; heceler melodiye kendiliğinden yerleşir."));
+  if (!lines.length) out.push(el("p", "muted small", null, "Bu bestenin sözü yok. «Sözü yaz» ile ekle; heceler melodiye kendiliğinden yerleşir."));
   box.replaceChildren(...out);
   refreshDawWords();
 }
+
+// What the lyrics panel's headings depend on.
+const wordsKey = () => (daw.secOf ? daw.secOf.join() + "|" + daw.sections.map((s) => s.label).join() : "");
 
 function refreshDawWords() {
   for (const span of document.querySelectorAll("#daw-words .dw-word")) {
@@ -465,26 +501,28 @@ function dawPicked() {
   return (bar && bar.notes[pick.k]) || null;
 }
 
-// YuE2 matches lyric sections to the score's sung sections by name and order. In a source song the
-// arrangement renames the score's sections after the lyrics anyway, so only the laying out counts.
+// YuE2 matches lyric sections to the score's sung sections by name and order. A source song sends
+// both as the timeline shows them (the lyrics are tagged by the sections they are sung in), so
+// only syllables on no note are worth a word there.
 function compareText() {
+  const placed = daw.map.filter((n) => n != null).length;
+  if (daw.ctx === "source") {
+    if (!daw.map.length) return { text: "", warn: false };
+    const missing = daw.map.length - placed;
+    return missing
+      ? { text: `${missing} hece notaya yerleşmedi (aşağıda): YuE2'ye önündeki hecenin bölümünde gider ama yerini kendisi seçer. Notaya sürükle.`, warn: true }
+      : { text: `${placed} hecenin hepsi bir notada. YuE2'ye zaman çizgisindeki gibi gider: bölümler Bölüm şeridindeki gibi, söz bu bölümlere göre etiketlenir (sözdeki etiketler kullanılmaz), hecesiz notalar enstrümana geçer.`, warn: false };
+  }
   const scoreNames = daw.tl.sections.filter((s) => s.sung).map((s) => LyricsLayout.sectionName(s.label));
   const lyricNames = LyricsLayout.lyricSections(daw.lyrics).map((s) => s.name);
   if (!lyricNames.length) return { text: "", warn: false };
-  const placed = daw.map.filter((n) => n != null).length;
-  if (daw.ctx === "source") {
-    const missing = daw.map.length - placed;
-    return missing
-      ? { text: `⚠ ${missing} hece notaya yerleşmedi (aşağıda). Düzenlemede bölüm adları sözlerin yerleştiği yere göre verilir.`, warn: true }
-      : { text: `✓ ${placed} hecenin hepsi bir notada. Düzenlemede notanın bölümleri sözlere göre adlandırılır, hecesiz ölçüler enstrümana geçer (👁 YuE2'ye gidecekler).`, warn: false };
-  }
   const both = `Notada söylenen: ${scoreNames.join(" → ") || "—"} · Sözde: ${lyricNames.join(" → ")}`;
-  if (scoreNames.join() === lyricNames.join()) return { text: `✓ ${both}`, warn: false };
+  if (scoreNames.join() === lyricNames.join()) return { text: both, warn: false };
   const hints = [];
   if (scoreNames[0] === "intro" && lyricNames[0] !== "intro") hints.push("introda söylenen nota var: giriş enstrümanla çalınacaksa intro ölçülerini seçip Vokal ⇄ Enstrüman yap");
   const missing = [...new Set(lyricNames.filter((name) => !scoreNames.includes(name)))];
   if (missing.length) hints.push(`sözde olup notada olmayan bölüm: ${missing.join(", ")}; ölçüleri seçip bölüm adını ver`);
-  return { text: `⚠ Sıra farklı (YuE2 sözleri bölümlere kendisi dağıtır). ${both}${hints.length ? ` · ${hints.join("; ")}` : ""}`, warn: true };
+  return { text: `Sıra farklı (YuE2 sözleri bölümlere kendisi dağıtır). ${both}${hints.length ? ` · ${hints.join("; ")}` : ""}`, warn: true };
 }
 
 function renderDawBar() {
@@ -494,7 +532,7 @@ function renderDawBar() {
   $("daw-bar-tools").classList.toggle("hidden", !!note || !daw.bars);
   const compare = compareText();
   $("daw-compare").classList.toggle("hidden", !!note || !!daw.bars || !compare.text);
-  $("daw-compare").textContent = compare.text;
+  Icons.set($("daw-compare"), compare.text ? (compare.warn ? "triangle-alert" : "check") : null, compare.text);
   $("daw-compare").title = compare.text;
   $("daw-compare").classList.toggle("warn", compare.warn);
   if (note) {
@@ -519,17 +557,17 @@ function renderDawBar() {
   else if (daw.marked.size) info = `${daw.marked.size} nota seçili · ←/→ ötele (Alt: ince) · ↑/↓ yarım ses (Shift: oktav) · sürükle: sağa/sola · Delete: sil · ⌘X: kes · ⌘C: kopyala · sarı çizgiyi sürükle, ⌘V: oraya yapıştır (devamı ötelenir) · ⌘+tık: ekle/çıkar · sağ tık: menü, bölüm ata`;
   else if (daw.bars) info = "Seçili ölçülere bölüm adı ver ya da söylenen ve çalınan notaları değiştir.";
   else if (n) info = `${n} hece seçili · sürükle: bıraktığın notadan başlayarak notalara dizilir (Alt: aralıkları koru), önündekiler kayar · ←/→ bir nota kaydır · çift tık: harfleri düzelt · Delete: sil`;
-  else info = `Tıkla: ${daw.selMode === "word" ? "kelime" : "hece"} seç (Alt+tık: ${daw.selMode === "word" ? "tek hece" : "kelime"}) · boş yerden sürükle: alan seç (melodide: notaları seç, kes/kopyala/yapıştır) · Shift: aralık · ⌘/Ctrl: ekle · notaya tıkla: perde/süre · sürükle: taşı (Shift: devamıyla) · uçlarını çek: uzat/kısalt · melodide boş yere çift tık: yeni nota · Boşluk: çal`;
+  else info = `Tıkla: ${daw.selMode === "word" ? "kelime" : "hece"} seç (Alt+tık: ${daw.selMode === "word" ? "tek hece" : "kelime"}) · boş yerden sürükle: alan seç (melodide: notaları seç, kes/kopyala/yapıştır) · Shift: aralık · ⌘/Ctrl: ekle · notaya tıkla: perde/süre · sürükle: taşı (Shift: devamıyla) · uçlarını çek: uzat/kısalt · melodide boş yere çift tık: yeni nota · hecenin uzatma ucunu sürükle: kaç notada söylensin · Boşluk: çal`;
   $("daw-info").textContent = info;
   $("daw-undo").disabled = !daw.history.length;
   const grid = ScoreModel.gridCheck(daw.model);
   const loose = grid.offGrid + grid.meterChanges;
-  $("daw-tidy").textContent = loose ? `🧲 Notaları hizala (${loose})` : "🧲 Notaları hizala";
+  Icons.set($("daw-tidy"), "magnet", loose ? `Notaları hizala (${loose})` : "Notaları hizala");
   $("daw-tidy").classList.toggle("attention", grid.notes > 0 && (grid.offGrid / grid.notes > 0.2 || grid.meterChanges > 0));
   $("daw-save").disabled = !dawDirty() && !daw.layoutFresh;
   $("daw-after").disabled = !n;
   $("daw-origin").textContent = `Nota: ${daw.origin}${daw.scoreDirty ? " (değişti)" : ""}`;
-  $("daw-play").textContent = daw.playing ? "⏸" : "▶";
+  Icons.set($("daw-play"), daw.playing ? "pause" : "play");
   $("daw-time").textContent = `${fmtTime(daw.pos)} / ${fmtTime(daw.tl.duration)}`;
   for (const button of document.querySelectorAll("#daw-selmode [data-mode]")) button.classList.toggle("on", button.dataset.mode === daw.selMode);
 }
@@ -628,14 +666,15 @@ function dawSeek(t) {
 // ---- editing
 
 function dawSnapshot() {
-  const { model, abc, tl, map, lyrics, note, bars, scoreDirty, layoutDirty, tracksDirty } = daw;
-  return { model, abc, tl, map, lyrics, note, bars, scoreDirty, layoutDirty, tracksDirty, tracks: JSON.parse(JSON.stringify(daw.tracks)) };
+  const { model, abc, tl, map, melisma, lyrics, note, bars, scoreDirty, layoutDirty, tracksDirty } = daw;
+  return { model, abc, tl, map, melisma, lyrics, note, bars, scoreDirty, layoutDirty, tracksDirty, tracks: JSON.parse(JSON.stringify(daw.tracks)) };
 }
 
 // A new syllable layout or lyrics.
 function dawChange(next) {
   daw.history.push(dawSnapshot());
   const lyricsChanged = next.lyrics !== daw.lyrics;
+  if (lyricsChanged) daw.melisma = LyricsLayout.carryBySyllable(daw.lyrics, next.lyrics, daw.melisma);
   daw.map = next.map;
   daw.lyrics = next.lyrics;
   daw.layoutDirty = true;
@@ -652,7 +691,11 @@ function dawScore(model, note, bars, keepMap, lyrics) {
   const tl = Timeline.build(abc);
   daw.history.push(dawSnapshot());
   const lyricsChanged = lyrics != null && lyrics !== daw.lyrics;
-  if (lyricsChanged) { daw.lyrics = lyrics; daw.layoutDirty = true; }
+  if (lyricsChanged) {
+    daw.melisma = LyricsLayout.carryBySyllable(daw.lyrics, lyrics, daw.melisma);
+    daw.lyrics = lyrics;
+    daw.layoutDirty = true;
+  }
   const map = keepMap || carryMap(daw.tl, tl, daw.map);
   if (map.some((n, g) => (n == null) !== (daw.map[g] == null))) daw.layoutDirty = true;
   dawPause();
@@ -762,7 +805,7 @@ function askDaw(item, text, choices) {
     button.onclick = () => { closeAskDaw(); choice.run(); };
     row.append(button);
   }
-  const cancel = el("button", "icon-btn daw-ask-x", null, "✕");
+  const cancel = Icons.set(el("button", "icon-btn daw-ask-x"), "x");
   cancel.type = "button";
   cancel.title = "Vazgeç";
   cancel.onclick = () => { closeAskDaw(); renderDaw(); dawMsg(""); };
@@ -1379,12 +1422,20 @@ function markedBars() {
   return [from, to];
 }
 
-// The picked notes' bars as one section of the score (intro, verse, chorus …); the syllables sung
-// there become a lyric section of that name too, since the arrangement names sections after the lyrics.
+// The picked notes' bars as one section of the score (intro, verse, chorus …). In an arrangement's
+// score the syllables sung there become a lyric section of that name too; a source song's lyrics
+// take their sections from the score anyway.
 function assignDawSection(label) {
   const range = markedBars();
   if (!range || scoreLocked()) return;
   const [from, to] = range, { bars } = daw.tl;
+  if (daw.ctx === "source") {
+    try {
+      dawScore(ScoreModel.setSection(daw.model, from, to, label), null);
+      dawMsg(`${from === to ? `Ölçü ${from + 1}` : `Ölçü ${from + 1}–${to + 1}`} artık ${label}; burada söylenen sözler de bu bölümle gider (geri alınabilir).`);
+    } catch (error) { dawMsg(error.message); }
+    return;
+  }
   const inside = (g) => daw.map[g] != null && daw.tl.vocal[daw.map[g]].u0 >= bars[from].u0 && daw.tl.vocal[daw.map[g]].u0 < bars[to].u1;
   const sung = daw.map.map((m, g) => (inside(g) ? g : -1)).filter((g) => g >= 0);
   // Only words sung wholly inside these bars change section: a word reaching over the edge,
@@ -1404,6 +1455,52 @@ function assignDawSection(label) {
     dawMsg(`${from === to ? `Ölçü ${from + 1}` : `Ölçü ${from + 1}–${to + 1}`} artık ${label}${retagged ? `; tamamı burada söylenen sözler de [${tag}] bölümü oldu` : ""} (geri alınabilir).`);
   } catch (error) { dawMsg(error.message); }
 }
+
+// The end of a syllable's melisma line dragged: it is sung over the notes up to the one under the
+// pointer (never onto the next syllable's note). A double click leaves it to the arrangement.
+function dragMelisma(event, g) {
+  event.preventDefault();
+  const n = daw.map[g];
+  if (n == null) return;
+  const next = daw.map.find((m, i) => i > g && m != null && m > n);
+  const last = (next ?? daw.tl.vocal.length) - 1;
+  const before = dawSnapshot();
+  let changed = false;
+  const move = (e) => {
+    const t = timeAt(e.clientX);
+    // A note is taken once the pointer is past its middle.
+    let x = n;
+    while (x < last && (daw.tl.vocal[x + 1].t0 + daw.tl.vocal[x + 1].t1) / 2 < t) x++;
+    if (daw.melisma[g] === x - n) return;
+    daw.melisma = daw.melisma.map((k, i) => (i === g ? x - n : k));
+    changed = true;
+    renderDaw();
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    if (!changed) return;
+    daw.history.push(before);
+    daw.layoutDirty = true;
+    const k = daw.melisma[g];
+    dawMsg(`«${daw.sylls[g].text}» ${k + 1} notada söylenecek${k ? "" : " (yalnız kendi notasında)"}; sonraki hecesiz notaları enstrüman çalar.`);
+    renderDawBar();
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
+
+$("daw-scroll").addEventListener("dblclick", (event) => {
+  const grip = event.target.closest(".daw-melisma");
+  if (!grip) return;
+  const g = Number(grip.dataset.g);
+  if (daw.melisma[g] == null) return;
+  daw.history.push(dawSnapshot());
+  daw.melisma = daw.melisma.map((k, i) => (i === g ? null : k));
+  daw.layoutDirty = true;
+  dawMsg(`«${daw.sylls[g].text}» kaç notada söyleneceği yine otomatik (geri alınabilir).`);
+  renderDaw();
+});
 
 // Dragging the playhead (by the ruler or its grip): it sticks to note starts near the pointer.
 function dragPlayhead(event) {
@@ -1474,7 +1571,7 @@ function tidyDaw() {
   const parts = [];
   if (result.moved) parts.push(`${result.moved} nota vuruşa oturtuldu (vuruş dışında başlayan vokal notası ${before.offGrid} → ${after.offGrid})`);
   if (result.fixed) parts.push(`${result.fixed} yerde farklı ölçü (ör. 2/4) kaldırıldı, araya sus eklendi ya da sus kısaltıldı`);
-  dawMsg(`${parts.join("; ")}. Heceler notalarında kaldı. Dinleyip kontrol et; beğenmezsen ↶ Geri al. Akorları melodiden önerdiysen, kaydettikten sonra "🎼 Melodiden öner"i yeniden çalıştır.`);
+  dawMsg(`${parts.join("; ")}. Heceler notalarında kaldı. Dinleyip kontrol et; beğenmezsen "Geri al". Akorları melodiden önerdiysen, kaydettikten sonra "Melodiden öner"i yeniden çalıştır.`);
 }
 
 function closeDawMenu() {
@@ -1499,7 +1596,7 @@ function openDawMenu(event) {
     const button = el("button", "menu-item" + extra);
     button.type = "button";
     button.disabled = !on;
-    button.append(el("span", null, null, label), el("span", "daw-menu-key", null, key));
+    button.append(el("span", null, null, label), key === "▸" ? Icons.set(el("span", "daw-menu-key"), "chevron-right") : el("span", "daw-menu-key", null, key));
     button.addEventListener("click", () => {
       if (run === sectionList) { sectionList(); return; }
       closeDawMenu();
@@ -1561,7 +1658,7 @@ function paintTrack(event, k) {
     renderDaw();
   };
   if (event.shiftKey && mode === "paint") {
-    const run = daw.tl.sections.find((s) => s.from <= first && first <= s.to) || { from: first, to: first };
+    const run = daw.sections.find((s) => s.from <= first && first <= s.to) || { from: first, to: first };
     daw.history.push(before);
     apply([...ranges, [run.from, run.to]]);
     renderDawBar();
@@ -1624,7 +1721,7 @@ $("daw-scroll").addEventListener("pointerdown", (event) => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       if (!moved) daw.bars = block ? [Number(block.dataset.from), Number(block.dataset.to)] : [first, first];
-      const run = daw.tl.sections.find((s) => s.from === daw.bars[0]);
+      const run = daw.sections.find((s) => s.from === daw.bars[0]);
       if (run && run.label && [...$("daw-label-name").options].some((o) => o.value === run.label)) $("daw-label-name").value = run.label;
       renderDaw();
     };
@@ -1636,6 +1733,9 @@ $("daw-scroll").addEventListener("pointerdown", (event) => {
     window.addEventListener("pointerup", up);
     return;
   }
+
+  const melismaGrip = target.closest(".daw-melisma");
+  if (melismaGrip) { dragMelisma(event, Number(melismaGrip.dataset.g)); return; }
 
   const sylBlock = target.closest(".daw-syl");
   if (sylBlock) {
@@ -1652,7 +1752,7 @@ $("daw-scroll").addEventListener("pointerdown", (event) => {
     const k = Number(lyricBlock.dataset.section);
     Object.assign(daw, { tray: null, note: null, bars: null });
     daw.marked.clear();
-    daw.sel = new Set(daw.sylls.filter((s) => s.section === k).map((s) => s.index));
+    daw.sel = new Set(sectionSyllables(k));
     daw.anchor = [...daw.sel][0] ?? null;
     renderDaw();
     return;
@@ -1721,7 +1821,7 @@ $("daw-words").addEventListener("pointerdown", (event) => {
   if (!word && !grip && !head) return;
   event.preventDefault();
   let unit;
-  if (head) unit = daw.sylls.filter((s) => s.section === Number(head.dataset.section)).map((s) => s.index);
+  if (head) unit = sectionSyllables(Number(head.dataset.section));
   else unit = (word || grip).dataset[word ? "gs" : "line"].split(",").map(Number);
   if (word && event.altKey) unit = [unit[0]];
   selectDaw(unit[0], event, unit);
@@ -1882,13 +1982,19 @@ $("daw-lyrics-apply").addEventListener("click", () => {
   const text = $("daw-lyrics-text").value.trim();
   $("daw-side").classList.remove("editing");
   if (text === daw.lyrics) return;
-  const same = LyricsLayout.allSyllables(text).length === daw.map.length;
-  // The same number of syllables keeps every syllable on its note; otherwise they are laid out again.
-  dawChange({ map: same ? daw.map : Align.autoAlign(daw.tl, text), lyrics: text });
-  dawMsg(same ? "Söz güncellendi; heceler yerlerinde kaldı." : "Söz güncellendi; hece sayısı değiştiği için heceler melodiye yeniden yerleştirildi.");
+  // The syllables that were there keep their notes (a corrected one too); new ones go on the empty
+  // notes where they are put in. Only lyrics with nothing left of the old ones are laid out anew.
+  const carried = LyricsLayout.carryLayout(daw.lyrics, text, daw.map, daw.tl.vocal.length);
+  dawChange({ map: carried ? carried.map : Align.autoAlign(daw.tl, text), lyrics: text });
+  if (!carried) { dawMsg("Söz baştan değişti; heceler melodiye yeniden yerleştirildi."); return; }
+  const parts = [`${carried.kept} hece yerinde kaldı`];
+  if (carried.placed) parts.push(`${carried.placed} yeni hece boş notalara yerleşti`);
+  if (carried.loose) parts.push(`${carried.loose} yeni hece için boş nota yok: aşağıda, sürükleyip yerleştir`);
+  dawMsg(`Söz güncellendi; ${parts.join(", ")}.`);
 });
 $("daw-side-toggle").addEventListener("click", () => {
-  $("daw").classList.toggle("no-side");
+  const hidden = $("daw").classList.toggle("no-side");
+  Icons.set($("daw-side-toggle"), hidden ? "panel-right-open" : "panel-right-close");
   renderDaw();
 });
 
@@ -1949,7 +2055,7 @@ function editTrack(change) {
 function renderTrackPhrase() {
   const track = daw.tracks[daw.trackOpen];
   if (!track) return;
-  $("dt-phrase").textContent = Arrange.trackPhrase(track, ScoreModel.sections(daw.model), daw.tl.bars.length)
+  $("dt-phrase").textContent = Arrange.trackPhrase(track, daw.sections, daw.tl.bars.length)
     || "— (henüz bir yere çubuk eklenmedi; şeritte başlayacağı ölçüye tıkla ya da sürükle)";
   for (const chip of $("dt-feel").children) chip.classList.toggle("on", (track.feel || []).includes(chip.dataset.feel));
 }
@@ -1995,7 +2101,7 @@ function dawBaseStyle() {
 
 $("daw-preview").addEventListener("click", () => {
   try {
-    const compiled = Arrange.compile({ abc: daw.abc, lyrics: daw.lyrics, map: daw.map, tracks: daw.tracks, style: dawBaseStyle(),
+    const compiled = Arrange.compile({ abc: daw.abc, lyrics: daw.lyrics, map: daw.map, melisma: daw.melisma, tracks: daw.tracks, style: dawBaseStyle(),
       chords: !(daw.design && daw.design.harmony === "free") });
     showYuePreview(compiled, daw.design ? `${daw.item.name} · ${daw.design.name}` : daw.job.title, dawDirty() || daw.layoutFresh);
   } catch (error) { dawMsg(`Önizleme hazırlanamadı: ${error.message}`); }
@@ -2007,6 +2113,8 @@ $("daw-save").addEventListener("click", async () => {
   const notes = [];
   $("daw-save").disabled = true;
   const at = () => Timeline.onsets(daw.tl, daw.map);
+  // The syllables' notes, and how many notes the hand-set melismas take.
+  const layoutOf = () => ({ at: at(), ...(daw.melisma.some((k) => k != null) ? { melisma: daw.melisma } : {}) });
   const trackList = () => daw.tracks.map(({ id, instrument, feel, text, bars, lead }) => ({ id, instrument, feel: feel || [], text: text || "", bars: bars ?? null, lead: !!lead }));
   try {
     if (daw.design) {
@@ -2014,7 +2122,7 @@ $("daw-save").addEventListener("click", async () => {
       const design = daw.design;
       const body = {};
       if (daw.scoreDirty) body.abc = daw.abc;
-      if (daw.scoreDirty || daw.layoutDirty || daw.layoutFresh) body.lyrics_layout = { at: at() };
+      if (daw.scoreDirty || daw.layoutDirty || daw.layoutFresh) body.lyrics_layout = layoutOf();
       if (daw.lyrics !== (design.lyrics || "")) body.lyrics = daw.lyrics;
       if (daw.tracksDirty) body.tracks = trackList();
       if (Object.keys(body).length) {
@@ -2030,7 +2138,7 @@ $("daw-save").addEventListener("click", async () => {
       // An arrangement's score edited: kept as a new eser tasarımı of its source.
       const job = daw.job;
       const made = await api(`/sources/${daw.item.id}/designs`, { method: "POST", body: JSON.stringify({
-        name: `${job.title} notası`, abc: daw.abc, lyrics: daw.lyrics, lyrics_layout: { at: at() }, tracks: trackList(),
+        name: `${job.title} notası`, abc: daw.abc, lyrics: daw.lyrics, lyrics_layout: layoutOf(), tracks: trackList(),
         origin: `«${job.title}» düzenlemesinden`,
       }) });
       daw.design = made;
@@ -2041,8 +2149,7 @@ $("daw-save").addEventListener("click", async () => {
     } else if (daw.layoutDirty) {
       const job = daw.job;
       const changed = daw.lyrics !== (job.lyrics || "");
-      const at = Timeline.onsets(daw.tl, daw.map);
-      const layout = changed ? { at, lyrics: daw.lyrics } : { at };
+      const layout = changed ? { ...layoutOf(), lyrics: daw.lyrics } : layoutOf();
       const updated = await api(`/jobs/${job.id}`, { method: "PATCH", body: JSON.stringify({ lyrics_layout: layout, lyrics_start: null }) });
       jobs = jobs.map((j) => (j.id === updated.id ? updated : j));
       job.lyrics_layout = layout;

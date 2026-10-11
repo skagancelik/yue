@@ -426,7 +426,74 @@ const LyricsLayout = (() => {
     return out;
   }
 
-  return { syllables, sectionName, lyricSections, allSyllables, noteSlots, normalize, isEmpty, compact, layOut, toMap, checkMap, moveSyllables, placeSyllable, editSyllable, insertSyllables, retag };
+  // Which syllable of the lyrics before an edit every syllable after it is (null = a new one): the
+  // syllables left as they were match in order; between two of them, as many changed syllables as
+  // there were are the same ones with corrected letters.
+  function matchSyllables(before, after) {
+    const a = allSyllables(before).map((s) => s.text.toLocaleLowerCase("tr")), b = allSyllables(after).map((s) => s.text.toLocaleLowerCase("tr"));
+    const out = b.map(() => null);
+    // Longest common subsequence of the two lists.
+    const len = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+    for (let i = a.length - 1; i >= 0; i--) {
+      for (let j = b.length - 1; j >= 0; j--) len[i][j] = a[i] === b[j] ? len[i + 1][j + 1] + 1 : Math.max(len[i + 1][j], len[i][j + 1]);
+    }
+    const pairs = [];
+    for (let i = 0, j = 0; i < a.length && j < b.length;) {
+      if (a[i] === b[j]) { pairs.push([i, j]); i++; j++; } else if (len[i + 1][j] >= len[i][j + 1]) i++; else j++;
+    }
+    pairs.push([a.length, b.length]);
+    let i0 = 0, j0 = 0;
+    for (const [i, j] of pairs) {
+      if (i - i0 === j - j0) for (let k = 0; k < i - i0; k++) out[j0 + k] = i0 + k;
+      if (j < b.length) out[j] = i;
+      i0 = i + 1;
+      j0 = j + 1;
+    }
+    return out;
+  }
+
+  // Per-syllable values (a melisma …) carried over to edited lyrics; new syllables get null.
+  function carryBySyllable(before, after, values) {
+    const from = matchSyllables(before, after);
+    if (!Array.isArray(values) || values.length !== allSyllables(before).length) return from.map(() => null);
+    return from.map((i) => (i == null ? null : values[i] ?? null));
+  }
+
+  // The notes of edited lyrics: every syllable that was there stays on its note; new ones go, in
+  // order, on the notes with no syllable after the one before them (before the next one's note);
+  // the rest go on no note. count = the vocal notes. Returns { map, kept, placed, loose }, or null
+  // when nothing of the lyrics before is left.
+  function carryLayout(before, after, map, count) {
+    const from = matchSyllables(before, after);
+    if (!from.some((i) => i != null)) return null;
+    const out = from.map((i) => (i == null ? null : map[i] ?? null));
+    const taken = new Set(out.filter((n) => n != null));
+    let placed = 0, loose = 0;
+    for (let g = 0; g < out.length;) {
+      if (from[g] != null) { g++; continue; }
+      let z = g;
+      while (z < out.length && from[z] == null) z++;
+      // The new syllables g..z-1: between the notes of the kept syllables around them.
+      const left = out.slice(0, g).filter((n) => n != null).pop();
+      const right = out.slice(z).find((n) => n != null);
+      const lo = left == null ? 0 : left + 1, hi = right == null ? count : right;
+      const free = [];
+      for (let n = lo; n < hi; n++) if (!taken.has(n)) free.push(n);
+      // Before the first kept syllable the new ones take the free notes nearest to it.
+      const use = left == null ? free.slice(Math.max(0, free.length - (z - g))) : free;
+      for (let k = g; k < z; k++) {
+        const n = use[k - g];
+        if (n == null) { loose++; continue; }
+        out[k] = n;
+        taken.add(n);
+        placed++;
+      }
+      g = z;
+    }
+    return { map: out, kept: from.filter((i) => i != null && map[i] != null).length, placed, loose };
+  }
+
+  return { syllables, sectionName, lyricSections, allSyllables, noteSlots, normalize, isEmpty, compact, layOut, toMap, checkMap, moveSyllables, placeSyllable, editSyllable, insertSyllables, retag, matchSyllables, carryBySyllable, carryLayout };
 })();
 
 if (typeof module !== "undefined") module.exports = LyricsLayout;
