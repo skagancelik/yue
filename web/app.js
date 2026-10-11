@@ -92,7 +92,7 @@ function renderSidebar() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "nav-item" + (view.type === "folder" && view.id === item.id ? " active" : "");
-    button.innerHTML = `<span class="nav-icon">📁</span><span class="nav-name"></span><span class="nav-count"></span>`;
+    button.innerHTML = `<span class="nav-icon"><i data-icon="folder"></i></span><span class="nav-name"></span><span class="nav-count"></span>`;
     button.querySelector(".nav-name").textContent = item.name;
     button.querySelector(".nav-count").textContent = item.count || "";
     button.addEventListener("click", () => setView({ type: "folder", id: item.id }));
@@ -373,11 +373,11 @@ function renderSources() {
     showCredit(node.querySelector(".source-credit"), item.copyright);
     const used = jobs.filter((j) => j.source_id === item.id).length;
     const saved = item.style || item.lyrics;
-    node.querySelector(".source-meta").textContent = [used ? `${used} düzenleme` : "", saved ? "✓ stil ve söz kayıtlı" : "",
+    node.querySelector(".source-meta").textContent = [used ? `${used} düzenleme` : "", saved ? "stil ve söz kayıtlı" : "",
       fmtAgo(item.created_at)].filter(Boolean).join(" · ");
     fillSourceScore(node, item);
     const audioPicked = source && source.id === item.id && !source.design_id;
-    node.querySelector(".use").textContent = audioPicked ? "✓ Ses kaydından (seçili)" : "🎧 Ses kaydından düzenle";
+    Icons.set(node.querySelector(".use"), audioPicked ? "check" : "headphones", audioPicked ? "Ses kaydından (seçili)" : "Ses kaydından düzenle");
     node.querySelector(".use").onclick = () => { selectSource(item); window.scrollTo({ top: 0, behavior: "smooth" }); };
     renderDesigns(node.querySelector(".designs"), item);
     // Do not overwrite what is being typed while the library refreshes.
@@ -429,15 +429,15 @@ function renderSources() {
 // The source's score: extract it on its own, follow the extraction, open it in the timeline.
 const transcribing = (item) => ["queued", "running"].includes(item.transcribe_status);
 const transcribeText = (item) => (item.transcribe_status === "running"
-  ? `🎼 ${item.transcribe_message || "Melodi çıkarılıyor"}`
-  : `🎼 Nota çıkarma sırada${gpu && gpu.gpu.state !== "running" ? " · GPU açılıyor (~3 dk)" : ""}`);
+  ? `${item.transcribe_message || "Melodi çıkarılıyor"}`
+  : `Nota çıkarma sırada${gpu && gpu.gpu.state !== "running" ? " · GPU açılıyor (~3 dk)" : ""}`);
 
 function scoreSummary(item) {
   if (transcribing(item)) return { text: transcribeText(item), busy: true };
-  if (item.transcribe_status === "failed" && !item.has_score) return { text: `⚠ Nota çıkarılamadı: ${item.transcribe_error || "bilinmeyen hata"}`, error: true };
+  if (item.transcribe_status === "failed" && !item.has_score) return { text: `Nota çıkarılamadı: ${item.transcribe_error || "bilinmeyen hata"}`, error: true };
   if (!item.has_score) return { text: "Melodi henüz notaya çıkarılmadı. Çıkarınca ilk eser tasarımı ondan oluşur; notayı, sözleri ve izleri orada hazırlarsın." };
   const versions = (item.transcripts || []).length;
-  return { text: `🎼 Melodi notaya çıkarıldı${versions > 1 ? ` (${versions} çıkarma)` : ""}` };
+  return { text: `Melodi notaya çıkarıldı${versions > 1 ? ` (${versions} çıkarma)` : ""}` };
 }
 
 // What a design holds, in one line.
@@ -489,7 +489,7 @@ async function borrowChords(item, design, button) {
       try { if (ScoreModel.chordLine(ScoreModel.parse(text)).length) found = { k, text }; } catch (error) { /* unreadable: try an older one */ }
     }
     if (!found) {
-      alert("Bu bestenin melodi çıkarmalarında akor yok. Önce bestede 🎼 Yeniden çıkar'a bas (yeni çıkarmalar akorları da alır), bitince tekrar dene.");
+      alert("Bu bestenin melodi çıkarmalarında akor yok. Önce bestede «Yeniden çıkar»a bas (yeni çıkarmalar akorları da alır), bitince tekrar dene.");
       return;
     }
     const out = Arrange.borrowChords(await designAbc(design), found.text);
@@ -527,51 +527,51 @@ function renderDesigns(box, item) {
     const main = el("div", "design-main");
     main.append(el("span", "design-name", null, design.name), el("span", "muted small", null, `${designSummary(design)} · ${design.origin || ""} · ${fmtAgo((design.updated_at || 0) * 1000)}`));
     const actions = el("div", "design-actions");
-    const button = (text, title, run, cls = "btn ghost small") => {
-      const b = el("button", cls, null, text);
+    const button = (icon, text, title, run, cls = "btn ghost small") => {
+      const b = Icons.set(el("button", cls), icon, text);
       b.type = "button";
       b.title = title;
       b.onclick = run;
       actions.append(b);
       return b;
     };
-    button("🎛 Aç", "Bu eser tasarımının notasını, hecelerini ve izlerini zaman çizgisinde düzenle", () => openDesignDaw(item, design));
-    button("👁 Önizle", "YuE2'ye gidecek hali: bu eser tasarımından YuE2'ye gönderilecek nota, söz ve stili gör", async () => {
+    button("sliders-horizontal", "Aç", "Bu eser tasarımının notasını, hecelerini ve izlerini zaman çizgisinde düzenle", () => openDesignDaw(item, design));
+    button("eye", "Önizle", "YuE2'ye gidecek hali: bu eser tasarımından YuE2'ye gönderilecek nota, söz ve stili gör", async () => {
       try { showYuePreview(await prepareDesign(design, $("style").value.trim() || item.style || ""), `${item.name} · ${design.name}`, false); } catch (error) { report(error); }
     });
-    button(picked ? "✓ Seçili" : "Bununla düzenle", "Düzenleme bu eser tasarımıyla yapılsın", () => { selectDesign(item, design); window.scrollTo({ top: 0, behavior: "smooth" }); },
+    button(picked ? "check" : null, picked ? "Seçili" : "Bununla düzenle", "Düzenleme bu eser tasarımıyla yapılsın", () => { selectDesign(item, design); window.scrollTo({ top: 0, behavior: "smooth" }); },
       "btn small " + (picked ? "ghost" : "primary"));
     // Chords: suggested from the design's own notes, or taken from a melody extraction with chords.
     const wrap = el("span", "menu-wrap");
-    const open = el("button", "btn ghost small menu-btn", null, "🎹 Akorları ekle");
+    const open = Icons.set(el("button", "btn ghost small menu-btn"), "piano", "Akorları ekle");
     open.type = "button";
     open.title = "Bu eser tasarımına akor ekle. Notalar, sözler ve hece yerleşimi değişmez.";
     const menu = el("div", "menu chord-menu hidden");
-    const option = (text, note, run) => {
+    const option = (icon, text, note, run) => {
       const b = el("button", "menu-item");
       b.type = "button";
-      b.append(el("div", null, null, text), el("div", "muted small", null, note));
+      b.append(Icons.set(el("div"), icon, text), el("div", "muted small", null, note));
       b.onclick = (event) => { event.stopPropagation(); closeMenus(); run(); };
       menu.append(b);
     };
-    option("🎼 Melodiden öner", "Anında, ses dosyası gerekmez: notalara uyan akorlar tahmin edilir", () => suggestChords(design, open));
-    option("🎧 Kayıttan çıkarılanları al", versions.length ? "Akorlu bir melodi çıkarması gerekir (🎼 Yeniden çıkar)" : "Önce bestenin melodisi notaya çıkarılmalı", () => borrowChords(item, design, open));
+    option("music", "Melodiden öner", "Anında, ses dosyası gerekmez: notalara uyan akorlar tahmin edilir", () => suggestChords(design, open));
+    option("headphones", "Kayıttan çıkarılanları al", versions.length ? "Akorlu bir melodi çıkarması gerekir (Yeniden çıkar)" : "Önce bestenin melodisi notaya çıkarılmalı", () => borrowChords(item, design, open));
     open.onclick = (event) => { event.stopPropagation(); const was = menu.classList.contains("hidden"); closeMenus(); menu.classList.toggle("hidden", !was); };
     wrap.append(open, menu);
     actions.append(wrap);
-    button("✎", "Adını değiştir", async () => {
+    button("pencil", "", "Adını değiştir", async () => {
       const name = prompt("Eser tasarımının adı", design.name);
       if (!name || !name.trim() || name.trim() === design.name) return;
       try { updateDesign(await api(`/designs/${design.id}`, { method: "PATCH", body: JSON.stringify({ name: name.trim() }) })); } catch (error) { report(error); }
     }, "icon-btn");
-    button("⧉", "Kopyasını oluştur (nota, söz, yerleşim ve izlerle)", async () => {
+    button("copy", "", "Kopyasını oluştur (nota, söz, yerleşim ve izlerle)", async () => {
       try { updateDesign(await api(`/sources/${item.id}/designs`, { method: "POST", body: JSON.stringify({ copy: design.id, name: `${design.name} (kopya)` }) })); } catch (error) { report(error); }
     }, "icon-btn");
-    const download = el("a", "icon-btn", null, "⬇");
+    const download = Icons.set(el("a", "icon-btn"), "download");
     download.href = design.score_download;
     download.title = "ABC dosyasını indir (sözsüz nota)";
     actions.append(download);
-    button("🗑", "Sil", async () => {
+    button("trash-2", "", "Sil", async () => {
       if (!confirm(`"${design.name}" eser tasarımı silinsin mi? (Ondan yapılmış düzenlemeler kalır.)`)) return;
       try {
         await api(`/designs/${design.id}`, { method: "DELETE" });
@@ -629,7 +629,7 @@ function fillSourceScore(node, item) {
   button.classList.toggle("hidden", !!summary.busy);
   button.disabled = false;
   button.classList.toggle("hidden", !!summary.busy || item.has_score);
-  button.textContent = item.transcribe_status === "failed" ? "🎼 Tekrar dene" : "🎼 Notayı çıkar";
+  Icons.set(button, "music", item.transcribe_status === "failed" ? "Tekrar dene" : "Notayı çıkar");
   button.title = "Kayıttaki melodiyi SheetSage2 ile notaya çevir; ilk eser tasarımı ondan oluşur (düzenleme yapmaz)";
   button.onclick = () => transcribeSource(item, button);
   const again = node.querySelector(".retranscribe");
@@ -731,7 +731,7 @@ function updateCreate() {
     : `GPU kapalı · açılış ~3 dk + düzenleme ~1–3 dk${variants === 2 ? " (2 varyasyon birlikte)" : ""}`;
   const design = selectedDesign();
   $("create-note").textContent += design ? ` · eser tasarımı «${design.name}» ile` : " · ses kaydından";
-  if (instrumentalChosen()) $("create-note").textContent += design ? " · 🎹 enstrümantal (söz gitmez)" : " · ⚠ enstrümantal için eser tasarımı seç";
+  if (instrumentalChosen()) $("create-note").textContent += design ? " · enstrümantal (söz gitmez)" : " · enstrümantal için eser tasarımı seç";
 }
 
 const selectedItem = () => source && source.id && sources.find((s) => s.id === source.id);
@@ -741,24 +741,24 @@ const selectedItem = () => source && source.id && sources.find((s) => s.id === s
 function renderPrep() {
   const item = selectedItem();
   $("prep").classList.toggle("hidden", !item);
-  $("create").textContent = "🎤 Düzenleme yap";
+  Icons.set($("create"), "mic", "Düzenleme yap");
   if (!item) return;
   const design = selectedDesign();
   const busy = transcribing(item);
   const lines = [];
   if (!design) {
-    lines.push("🎧 Ses kaydından: YuE2 melodiyi kayıttan kendisi çıkarır; söz ve stil formdan gider. Eser tasarımı kullanılmaz.");
+    lines.push("Ses kaydından: YuE2 melodiyi kayıttan kendisi çıkarır; söz ve stil formdan gider. Eser tasarımı kullanılmaz.");
     if (busy) lines.push(`${transcribeText(item)}.`);
     else if (item.has_score) lines.push("Notayı, hece yerleşimini ve izleri kendin belirlemek istersen aşağıdaki bestede bir eser tasarımı seç: \"Bununla düzenle\".");
     else lines.push("Notayı, hece yerleşimini ve izleri kendin belirlemek istersen önce notayı çıkar; ilk eser tasarımı ondan oluşur.");
   } else {
-    lines.push(`🎼 Eser tasarımı «${design.name}»: ${designSummary(design)}`);
+    lines.push(`Eser tasarımı «${design.name}»: ${designSummary(design)}`);
     const chords = designChords(design);
-    if (chords === 0) lines.push("🎹 Eşlik: bu notada akor yok, eşliği YuE2 uyduracak. Şarkının kendi akorlarıyla denemek için bestede 🎼 Yeniden çıkar'a bas (yeni çıkarmalar akorları da alır), sonra o çıkarmadan yeni bir eser tasarımı oluştur.");
+    if (chords === 0) lines.push("Eşlik: bu notada akor yok, eşliği YuE2 uyduracak. Şarkının kendi akorlarıyla denemek için bestede \"Yeniden çıkar\"a bas (yeni çıkarmalar akorları da alır), sonra o çıkarmadan yeni bir eser tasarımı oluştur.");
     const lyrics = $("lyrics").value.trim(), edited = editorLyrics(design);
-    if (edited && lyrics && lyrics !== edited) lines.push('<span class="warn">⚠ Formdaki söz eser tasarımındakinden farklı. Düzenleme eser tasarımındaki sözle ve hece yerleşimiyle yapılır. Formdakini kullanmak istiyorsan 🎛 ile aç (formdaki söz açılır), hecelerini yerleştirip kaydet.</span>');
+    if (edited && lyrics && lyrics !== edited) lines.push('<span class="warn">Formdaki söz eser tasarımındakinden farklı. Düzenleme eser tasarımındaki sözle ve hece yerleşimiyle yapılır. Formdakini kullanmak istiyorsan "Eser tasarımını aç" ile aç (formdaki söz açılır), hecelerini yerleştirip kaydet.</span>');
     else if (edited) lines.push("Nota, söz, hece yerleşimi, hecesiz ölçüler (enstrümana verilir), bölüm adları ve izler eser tasarımından alınıp YuE2'nin okuyacağı notaya, söze ve stile çevrilecek.");
-    else if (lyrics) lines.push('<span class="warn">⚠ Bu söz eser tasarımında henüz notaya yerleştirilmedi; heceler melodiye otomatik yerleştirilecek. 🎛 ile açıp kontrol edip kaydetmen önerilir.</span>');
+    else if (lyrics) lines.push('<span class="warn">Bu söz eser tasarımında henüz notaya yerleştirilmedi; heceler melodiye otomatik yerleştirilecek. "Eser tasarımını aç" ile açıp kontrol edip kaydetmen önerilir.</span>');
   }
   $("prep-state").innerHTML = lines.map((l) => `<div>${l.startsWith("<span") ? l : escapeHtml(l)}</div>`).join("");
   const chordCount = design ? designChords(design) : null;
@@ -769,7 +769,7 @@ function renderPrep() {
   }
   $("prep-progress").classList.toggle("hidden", !busy);
   $("prep-transcribe").classList.toggle("hidden", busy || !!design || item.has_score);
-  $("prep-transcribe").textContent = "🎼 Notayı çıkar (eser tasarımı için)";
+  Icons.set($("prep-transcribe"), "music", "Notayı çıkar (eser tasarımı için)");
   $("prep-daw").classList.toggle("hidden", !design);
   $("prep-preview").classList.toggle("hidden", !design);
 }
@@ -816,13 +816,14 @@ const instrumentalChosen = () => $("gen-kind").value === "instrumental";
 
 async function prepareDesign(design, style, lyrics = "", instrumental = instrumentalChosen()) {
   const abc = await designAbc(design);
-  let map = null;
+  let map = null, melisma = null;
   const edited = editorLyrics(design);
   if (edited) {
     lyrics = edited;
     try { map = Timeline.mapFromOnsets(Timeline.build(abc), design.lyrics_layout.at); } catch (error) { map = null; }
+    melisma = design.lyrics_layout.melisma || null;
   } else lyrics = lyrics || design.lyrics || "";
-  const compiled = Arrange.compile({ abc, lyrics, map, tracks: design.tracks || [], style, chords: design.harmony !== "free" });
+  const compiled = Arrange.compile({ abc, lyrics, map, melisma, tracks: design.tracks || [], style, chords: design.harmony !== "free" });
   return instrumental ? Arrange.instrumentalVersion(compiled) : compiled;
 }
 
@@ -851,13 +852,13 @@ function showYuePreview(compiled, title, unsaved) {
   $("yp-report").replaceChildren(...(compiled.report.length ? compiled.report : [{ kind: "ok", text: "Notada değiştirilecek bir şey yok." }]).map((r) => {
     const line = document.createElement("div");
     line.className = r.kind;
-    line.textContent = (r.kind === "warn" ? "⚠ " : "✓ ") + r.text;
+    Icons.set(line, r.kind === "warn" ? "triangle-alert" : "check", r.text);
     return line;
   }));
   $("yp-structure").replaceChildren(...compiled.structure.map((run) => {
     const chip = document.createElement("span");
     chip.className = run.sung ? "sung" : "";
-    chip.textContent = `${run.label || "adsız"} ${run.sung ? "🎤" : "🎹"} ${run.from + 1}–${run.to + 1}`;
+    chip.append(`${run.label || "adsız"} `, Icons.node(run.sung ? "mic" : "piano"), ` ${run.from + 1}–${run.to + 1}`);
     chip.title = `ölçü ${run.from + 1}–${run.to + 1}: ${run.sung ? "söylenen" : "yalnız enstrüman"}`;
     return chip;
   }));
@@ -880,7 +881,7 @@ function showYuePreview(compiled, title, unsaved) {
   previewRequest = { style: compiled.style, lyrics: compiled.lyrics, abc: compiled.abc, cot: compiled.cot, seed, ...(cfg == null ? {} : { cfg_scale: cfg }) };
   $("yp-copied").textContent = "";
   $("yp-json").classList.add("hidden");
-  $("yp-note").textContent = (compiled.style.length > 2000 ? "⚠ Stil 2000 karakterden uzun; kısaltman gerekir. " : "")
+  $("yp-note").textContent = (compiled.style.length > 2000 ? "Stil 2000 karakterden uzun; kısaltman gerekir. " : "")
     + (unsaved ? "Kaydedilmemiş değişiklikler de dahil. " : "")
     + "Düzenleme yap'a basınca bunlar gönderilir; bestenin kendi notası değişmez.";
   $("yue-preview").showModal();
@@ -932,7 +933,7 @@ $("create").addEventListener("click", async () => {
       const compiled = await prepareDesign(design, body.style, body.lyrics);
       if (compiled.style.length > 2000) throw new Error("İzlerle birlikte stil 2000 karakteri aşıyor; stili ya da iz açıklamalarını kısalt");
       Object.assign(body, { abc: compiled.abc, lyrics: compiled.lyrics, style: compiled.style, style_base: body.style,
-        lyrics_layout: { at: compiled.at }, cot: compiled.cot });
+        lyrics_layout: { at: compiled.at, ...(compiled.melisma ? { melisma: compiled.melisma } : {}) }, cot: compiled.cot });
       // Nothing is sung, so there is nothing to separate.
       if (compiled.instrumental) Object.assign(body, { instrumental: true, stems: false, lyrics_layout: undefined });
     }
@@ -992,7 +993,7 @@ function render() {
   $("shell").classList.toggle("no-side", view.type === "liked");
   document.querySelector(".sidebar").classList.toggle("hidden", view.type === "liked");
   $("create-folder-name").textContent = folder ? folder.name : "";
-  $("view-title").textContent = view.type === "liked" ? "♥ Beğendiklerim" : folder ? folder.name : "";
+  Icons.set($("view-title"), view.type === "liked" ? "heart" : null, view.type === "liked" ? "Beğendiklerim" : folder ? folder.name : "");
   $("subtabs").classList.toggle("hidden", !folder);
   document.querySelectorAll(".subtab").forEach((b) => {
     const on = b.dataset.tab === tab;
@@ -1005,7 +1006,7 @@ function render() {
   $("jobs-title").textContent = "Beğenilen düzenlemeler";
   $("folder-menu").classList.toggle("hidden", !folder);
   $("empty-text").textContent = view.type === "liked"
-    ? "Henüz beğendiğin düzenleme yok. Bir düzenlemedeki ♡ ikonuna dokun."
+    ? "Henüz beğendiğin düzenleme yok. Bir düzenlemedeki kalp ikonuna dokun."
     : folder ? "Bu şarkıda henüz düzenleme yok. Yüklenen Besteler sekmesinden bir beste seçip düzenleme yap." : "";
   renderSidebar();
   renderSources();
@@ -1046,11 +1047,11 @@ function closeMenus(except) {
 document.addEventListener("click", () => closeMenus());
 document.addEventListener("keydown", (event) => { if (event.key === "Escape") closeMenus(); });
 
-function menuItem(label, onClick, cls = "") {
+function menuItem(label, onClick, cls = "", icon = null) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "menu-item " + cls;
-  button.textContent = label;
+  Icons.set(button, icon, label);
   button.onclick = onClick;
   return button;
 }
@@ -1085,22 +1086,22 @@ function buildJobMenu(node, job, active) {
       link.className = "menu-item";
       link.href = url;
       link.rel = "noopener";
-      link.textContent = "⬇ " + label;
+      Icons.set(link, "download", label);
       items.push(link);
     }
   }
-  items.push(menuItem("↻ Tekrar kullan", () => reuse(job)));
+  items.push(menuItem("Tekrar kullan", () => reuse(job), "", "refresh-cw"));
   const targets = folders.filter((f) => f.id !== job.folder_id);
   if (targets.length) {
     items.push(menuLabel("Şarkıya taşı"));
     for (const folder of targets) {
-      items.push(menuItem(`📁 ${folder.name}`, async () => {
+      items.push(menuItem(folder.name, async () => {
         try {
           const updated = await api(`/jobs/${job.id}`, { method: "PATCH", body: JSON.stringify({ folder_id: folder.id }) });
           jobs = jobs.map((j) => (j.id === job.id ? updated : j));
           render();
         } catch (error) { report(error); }
-      }));
+      }, "", "folder"));
     }
   }
   const divider = document.createElement("div");
@@ -1109,14 +1110,14 @@ function buildJobMenu(node, job, active) {
   if (active) {
     items.push(menuItem("İptal et", async () => { await api(`/jobs/${job.id}/cancel`, { method: "POST" }); refresh(); }, "danger"));
   } else {
-    items.push(menuItem("🗑 Sil", async () => {
+    items.push(menuItem("Sil", async () => {
       if (!confirm(`"${job.title}" silinsin mi?`)) return;
       try {
         await api(`/jobs/${job.id}`, { method: "DELETE" });
         jobs = jobs.filter((j) => j.id !== job.id);
         render();
       } catch (error) { report(error); }
-    }, "danger"));
+    }, "danger", "trash-2"));
   }
   menu.replaceChildren(...items);
 }
@@ -1174,10 +1175,10 @@ function fillJob(node, job) {
   const folder = folders.find((f) => f.id === job.folder_id);
   const folderLine = node.querySelector(".job-folder");
   folderLine.classList.toggle("hidden", view.type !== "liked" || !folder);
-  folderLine.textContent = folder ? `📁 ${folder.name}` : "";
+  Icons.set(folderLine, folder ? "folder" : null, folder ? folder.name : "");
 
   const like = node.querySelector(".like");
-  like.textContent = job.liked ? "♥" : "♡";
+  Icons.set(like, "heart");
   like.classList.toggle("on", !!job.liked);
   like.setAttribute("aria-pressed", String(!!job.liked));
   like.title = job.liked ? "Beğeniyi kaldır" : "Beğen";
@@ -1222,10 +1223,10 @@ function fillJob(node, job) {
   const error = node.querySelector(".job-error");
   error.classList.toggle("hidden", !job.error);
   error.textContent = job.error || "";
-  const from = job.design_name ? ` · 🎼 eser tasarımı «${job.design_name}»${job.cot === "full" ? " · akorlarıyla" : ""}`
-    : { prepared: " · 🎛 hazırlanmış nota", edited: " · 🎼 düzeltilmiş nota", transcript: " · 🎼 çıkarılmış nota" }[job.score_from] || (job.status ? " · 🎧 ses kaydından" : "");
+  const from = job.design_name ? ` · eser tasarımı «${job.design_name}»${job.cot === "full" ? " · akorlarıyla" : ""}`
+    : { prepared: " · hazırlanmış nota", edited: " · düzeltilmiş nota", transcript: " · çıkarılmış nota" }[job.score_from] || (job.status ? " · ses kaydından" : "");
   const meta = node.querySelector(".meta");
-  meta.textContent = fmtAgo(job.created_at) + from + (job.instrumental ? " · 🎹 enstrümantal" : "") + (job.cfg_scale ? ` · stile bağlılık ${job.cfg_scale}` : "");
+  meta.textContent = fmtAgo(job.created_at) + from + (job.instrumental ? " · enstrümantal" : "") + (job.cfg_scale ? ` · stile bağlılık ${job.cfg_scale}` : "");
   if (job.seed != null) {
     // The seed, to make the same arrangement again with one setting changed.
     const seed = document.createElement("button");
@@ -1261,7 +1262,7 @@ function fillStems(node, job) {
   const button = node.querySelector(".stems-btn");
   const canRequest = job.status === "succeeded" && (!state || state === "failed");
   button.classList.toggle("hidden", !canRequest);
-  button.textContent = state === "failed" ? "🎙 Tekrar dene" : "🎙 Altyapı ve vokal ayır";
+  Icons.set(button, "mic-vocal", state === "failed" ? "Tekrar dene" : "Altyapı ve vokal ayır");
   button.onclick = async () => {
     button.disabled = true;
     try {
@@ -1303,7 +1304,7 @@ function openLyrics(job) {
   $("lyrics-modal").showModal();
 }
 async function copyFromModal(text, label) {
-  try { await copyText(text); $("lyrics-note").textContent = `${label} kopyalandı ✓`; }
+  try { await copyText(text); Icons.set($("lyrics-note"), "check", `${label} kopyalandı`); }
   catch (error) { $("lyrics-note").textContent = "Kopyalanamadı: metni seçip Ctrl/Cmd+C ile kopyala"; }
 }
 $("lyrics-copy").addEventListener("click", () => lyricsJob && copyFromModal(lyricsJob.lyrics || "", "Sözler"));
@@ -1353,7 +1354,7 @@ function stopScore() {
   score.synth = null;
   score.timer = null;
   document.querySelectorAll("#score-paper .abcjs-note_playing").forEach((el) => el.classList.remove("abcjs-note_playing"));
-  $("score-play").textContent = "▶ Melodiyi çal";
+  Icons.set($("score-play"), "play", "Melodiyi çal");
 }
 
 function drawScore() {
@@ -1384,7 +1385,7 @@ function drawScore() {
   else if (withLyrics) status += ` Sözler tahmini yerleştirildi: ${placed}/${total} hece bir notaya denk geldi.`;
   const short = score.words.sections.filter((section) => section.count > section.placed);
   if (withLyrics && short.length) {
-    status += ` ⚠ ${short.map((section) => section.tag || "söz").join(", ")}: notaya düşmeyen hece var (🎛 Zaman çizgisi'nde görünür).`;
+    status += ` ${short.map((section) => section.tag || "söz").join(", ")}: notaya düşmeyen hece var (zaman çizgisinde görünür).`;
   }
   $("score-status").textContent = status;
   $("score-lyrics").disabled = !total;
@@ -1460,7 +1461,7 @@ $("score-play").addEventListener("click", async () => {
     score.timer = timer;
     synth.start();
     timer.start();
-    button.textContent = "■ Durdur";
+    Icons.set(button, "square", "Durdur");
   } catch (error) {
     stopScore();
     $("score-status").textContent = `Çalınamadı: ${error.message || error}`;
@@ -1528,7 +1529,7 @@ function applyMix() {
   pb.vocals.volume = volume;
   pb.main.muted = pb.muted || (pb.stems && !pb.inst);
   pb.vocals.muted = pb.muted || !pb.voc;
-  $("pb-mute").textContent = pb.muted || volume === 0 ? "🔇" : "🔊";
+  Icons.set($("pb-mute"), pb.muted || volume === 0 ? "volume-x" : "volume-2");
   for (const [cls, on] of [[".toggle.inst", pb.inst], [".toggle.voc", pb.voc]]) {
     const button = $("pb-mix").querySelector(cls);
     button.classList.toggle("on", on);
@@ -1592,11 +1593,11 @@ function updatePlayerBar() {
 
 function syncPlayIcons() {
   const playing = !!pb.id && !pb.main.paused;
-  $("pb-play").textContent = playing ? "⏸" : "▶";
+  Icons.set($("pb-play"), playing ? "pause" : "play");
   document.querySelectorAll(".job").forEach((node) => {
     const button = node.querySelector(".art-play");
     const on = playing && node.dataset.id === pb.id;
-    button.textContent = on ? "⏸" : "▶";
+    Icons.set(button, on ? "pause" : "play");
     node.classList.toggle("now-playing", !!pb.id && node.dataset.id === pb.id);
   });
 }

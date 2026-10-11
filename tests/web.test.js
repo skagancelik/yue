@@ -112,30 +112,28 @@ test("compile: unsung intro goes to Ins, sections follow the lyrics, style gets 
   assert.ok(out.report.some((r) => /enstrümana verildi/.test(r.text)));
 });
 
-test("compile renames score sections after where the lyrics were put", () => {
-  const tl = Timeline.build(ABC);
+test("compile takes the sections from the timeline: the score's names, not the lyrics' tags", () => {
+  // The lyrics are tagged the other way round; what counts is where their syllables are sung.
   const lyrics = "[Nakarat]\nsevdim seni deli gibi gel artık\n\n[Kıta]\ngel gör beni aşkın";
-  const sylls = LyricsLayout.allSyllables(lyrics);
-  // The chorus lyrics on the verse bars and the verse lyrics on the chorus bars.
-  const map = sylls.map((s, g) => (s.section === 0 ? 5 + g : 12 + (g - sylls.findIndex((x) => x.section === 1))));
+  const map = [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 18, 19, 20, 21, 22, 23];
   const out = Arrange.compile({ abc: ABC, lyrics, map, tracks: [], style: "pop" });
-  const runs = ScoreModel.sections(ScoreModel.parse(out.abc));
-  assert.deepStrictEqual(runs.filter((r) => r.sung).map((r) => r.label), ["chorus", "verse"]);
-  assert.ok(out.lyrics.startsWith("[Chorus]\n") && out.lyrics.includes("\n[Verse]\n"));
+  assert.deepStrictEqual(out.structure.map((r) => [r.label, r.from, r.to, r.sung]),
+    [["intro", 0, 1, false], ["verse", 2, 5, true], ["chorus", 6, 7, true], ["outro", 8, 11, false]]);
+  assert.strictEqual(out.lyrics, "[Verse]\nsevdim seni deli gibi gel artık\n\n[Chorus]\ngel gör beni aşkın");
 });
 
-test("compile names empty lyric tags like the unsung bars of the score where they are", () => {
-  const tl = Timeline.build(ABC);
-  const words = "[Verse]\nsevdim seni deli gibi gel artık\n\n[Chorus]\ngel gör beni aşkın";
-  const lyrics = `[Giriş]\n\n${words.replace("\n\n[Chorus]", "\n\n[Solo]\n\n[Chorus]")}\n\n[Instrumental]\n`;
-  const map = Align.autoAlign(tl, lyrics);
+test("compile groups the lyrics by where they are sung: line breaks and untagged lyrics, loose syllables", () => {
+  // No tags; one line runs from the verse into the chorus; "sin" is on no note (goes with "mez").
+  const lyrics = "gel gör be-ni aşkın ne yaptı bil\nmezsin sev dim";
+  const sylls = LyricsLayout.allSyllables(lyrics);
+  assert.strictEqual(sylls.length, 14);
+  const map = [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, null, 18, 19];
   const out = Arrange.compile({ abc: ABC, lyrics, map, tracks: [], style: "pop" });
-  const labels = ScoreModel.sections(ScoreModel.parse(out.abc)).map((r) => r.label);
-  assert.deepStrictEqual(labels, ["intro", "verse", "chorus", "outro"]);
-  assert.ok(out.lyrics.startsWith("[Intro]\n\n[Verse]\n"), out.lyrics);
-  assert.ok(out.lyrics.endsWith("\n\n[Outro]"), "[Instrumental] after the singing is the outro");
-  // No interlude bars in this score: an empty tag between sung ones keeps its own name.
-  assert.ok(out.lyrics.includes("\n[Solo]\n"), out.lyrics);
+  assert.strictEqual(out.lyrics, "[Verse]\ngel gör be-ni aşkın ne yaptı bil\nmezsin\n\n[Chorus]\nsev dim");
+  // A score without section names: the sung bars are a verse, the bars around them intro and outro.
+  const bare = ABC.replace(/^% \w+\n/gm, "");
+  const plain = Arrange.compile({ abc: bare, lyrics, map: [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18], tracks: [], style: "pop" });
+  assert.deepStrictEqual(plain.structure.map((r) => [r.label, r.from, r.to]), [["intro", 0, 1], ["verse", 2, 6], ["outro", 7, 11]]);
 });
 
 test("chords: kept apart from the notes, written back where they start, carried by edits and pastes", () => {
@@ -413,6 +411,63 @@ test("moveNotes moves picked notes in time and pitch and overwrites what they la
   const tail = ScoreModel.moveNotes(model, { vocal: [16] }, -4);
   assert.strictEqual(tail.model.bars[0].vocal, "c8d4e8z12", "d keeps the part before e");
   assert.throws(() => ScoreModel.moveNotes(model, { vocal: [0] }, -1), /başından/);
+});
+
+test("plannedSections shows the sections compile will send: a pickup goes with its verse, unsung bars leave the chorus, a gap is an interlude", () => {
+  const tl = Timeline.build(ABC), model = ScoreModel.parse(ABC);
+  const lyrics = "[Verse]\nla la la la la la\n\n[Chorus]\nlo lo lo";
+  // The verse starts on the intro's last bar (a pickup); the chorus is sung only in its first bar.
+  const map = [4, 5, 6, 7, 8, 9, 18, 19, 20];
+  const planned = Arrange.plannedSections(tl, model, lyrics, map).sections.map((r) => [r.label, r.from, r.to, r.sung]);
+  assert.deepStrictEqual(planned, [["intro", 0, 0, false], ["verse", 1, 3, true], ["interlude", 4, 5, false], ["chorus", 6, 7, true], ["outro", 8, 11, false]]);
+  const sent = Arrange.compile({ abc: ABC, lyrics, map, tracks: [], style: "pop" }).structure.map((r) => [r.label, r.from, r.to, r.sung]);
+  assert.deepStrictEqual(planned, sent);
+  assert.strictEqual(Arrange.plannedSections(tl, model, "", []), null, "no syllables");
+  // Bars 7–8 renamed: the chorus left after them has nothing sung, so it is part of the outro.
+  const renamed = ScoreModel.serialize(ScoreModel.setSection(model, 6, 7, "bridge")).text;
+  assert.deepStrictEqual(Arrange.compile({ abc: renamed, lyrics, map, tracks: [], style: "pop" }).structure.map((r) => [r.label, r.from, r.to]),
+    [["intro", 0, 0], ["verse", 1, 3], ["interlude", 4, 5], ["bridge", 6, 7], ["outro", 8, 11]]);
+});
+
+test("a melisma set in the timeline: the syllable is sung over that many notes, the rest is played", () => {
+  const lyrics = "la la la la ah\nlo lo lo";
+  const map = [5, 6, 7, 8, 9, 18, 19, 20];
+  // Automatic: "ah" is held to the end of its phrase (two notes); bars 4–5 go to the instrument.
+  const auto = ScoreModel.parse(Arrange.compile({ abc: ABC, lyrics, map, tracks: [], style: "pop" }).abc);
+  assert.deepStrictEqual([auto.bars[4].vocal, auto.bars[4].ins], ["Z", "e8e8f8g8"]);
+  // Set to four notes: over the bar line and the breath, into bar 5; the notes after it are played.
+  const melisma = [null, null, null, null, 4, null, null, null];
+  const out = Arrange.compile({ abc: ABC, lyrics, map, melisma, tracks: [], style: "pop" });
+  const model = ScoreModel.parse(out.abc);
+  assert.deepStrictEqual([model.bars[4].vocal, model.bars[4].ins], ["e8e8z16", "z16f8g8"]);
+  assert.strictEqual(model.bars[5].vocal, "Z");
+  assert.deepStrictEqual(out.melisma, melisma);
+  // Zero: only its own note; a melisma never reaches the next syllable's note.
+  const none = Arrange.sungNotes(map, LyricsLayout.allSyllables(lyrics), Timeline.build(ABC), [null, null, null, null, 0, 9, null, null]);
+  assert.deepStrictEqual([...none].sort((a, b) => a - b), [5, 6, 7, 8, 9, 18, 19, 20, 21, 22, 23]);
+});
+
+test("carryBySyllable keeps the values of the syllables a lyrics edit left as they were", () => {
+  // sev dim se ni gel gör be ni → sev miş tim se ni gel gör be ni (one word retyped, a tag changed)
+  const values = [1, null, 2, null, null, 3, null, 4];
+  assert.deepStrictEqual(LyricsLayout.carryBySyllable("[Verse]\nsevdim seni\ngel gör beni", "[Chorus]\nsevmiştim seni\ngel gör beni", values),
+    [1, null, null, 2, null, null, 3, null, 4]);
+  assert.deepStrictEqual(LyricsLayout.carryBySyllable("a b c", "a x c", [1, 2, 3]), [1, 2, 3], "a corrected syllable keeps its value");
+  assert.deepStrictEqual(LyricsLayout.carryBySyllable("a b", "a b c", [1, 2, 9]), [null, null, null], "values that do not fit the old lyrics");
+});
+
+test("carryLayout keeps the syllables on their notes when the lyrics are edited, new ones on empty notes", () => {
+  // sev(0) dim(2) se(3) ni(4) gel(5); note 1 is held by "sev". "sevdim" becomes "sevmiştim".
+  const out = LyricsLayout.carryLayout("sevdim seni gel", "sevmiştim seni gel", [0, 2, 3, 4, 5], 8);
+  assert.deepStrictEqual(out, { map: [0, 1, 2, 3, 4, 5], kept: 4, placed: 2, loose: 0 });
+  // A letter corrected: the same syllables on the same notes.
+  assert.deepStrictEqual(LyricsLayout.carryLayout("sevdım seni", "sevdim seni", [0, 1, 2, 3], 4).map, [0, 1, 2, 3]);
+  // No empty note where they are put in: the new syllables wait to be placed by hand.
+  assert.deepStrictEqual(LyricsLayout.carryLayout("a b", "a x y b", [0, 1], 2), { map: [0, null, null, 1], kept: 2, placed: 0, loose: 2 });
+  // Before the first syllable: the empty notes nearest to it. Syllables taken out free their notes.
+  assert.deepStrictEqual(LyricsLayout.carryLayout("b c", "a b c", [3, 4], 5).map, [2, 3, 4]);
+  assert.deepStrictEqual(LyricsLayout.carryLayout("a b c", "a c", [0, 1, 2], 3).map, [0, 2]);
+  assert.strictEqual(LyricsLayout.carryLayout("a b", "x y z", [0, 1], 3), null, "nothing left: laid out anew");
 });
 
 let failed = 0;

@@ -368,6 +368,10 @@ body.has-player { padding-bottom: 88px; }
 .daw-syl.selected { background: var(--accent); color: #fff; }
 .daw-syl.playing { background: #ffd34d; color: #000; }
 .daw-hold { top: 15px; height: 2px; background: #6a6a80; }
+.daw-hold.set { background: var(--accent); }
+.daw-melisma { top: 8px; width: 6px; height: 16px; border-radius: 3px; background: #6a6a80; cursor: ew-resize; opacity: .55; z-index: 2; }
+.daw-melisma:hover, .daw-melisma.set { opacity: 1; }
+.daw-melisma.set { background: var(--accent); }
 .daw-playhead { position: absolute; top: 0; bottom: 0; left: 0; width: 2px; margin-left: -1px; background: #ffd34d; z-index: 4; pointer-events: none; }
 .daw-tray { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 16px; border-top: 1px solid var(--line); background: var(--panel); max-height: 90px; overflow: auto; }
 .daw-loose { border: 1px solid var(--warn); background: transparent; color: var(--warn); border-radius: 4px; padding: 1px 6px; font-size: 12px; cursor: grab; touch-action: none; }
@@ -529,3 +533,12 @@ body.has-player { padding-bottom: 88px; }
 @media (max-width: 520px) { .gen-row { grid-template-columns: 1fr; } }
 .seed-link { background: none; border: 0; padding: 0; font: inherit; color: inherit; text-decoration: underline dotted; cursor: pointer; }
 .seed-link:hover { color: var(--text, inherit); }
+
+/* Lucide icons (icons.js): as tall as the text around them, in its color. */
+i[data-icon] { display: inline-flex; vertical-align: -0.15em; font-style: normal; flex: none; }
+i[data-icon] .icon { width: 1.1em; height: 1.1em; }
+.btn i[data-icon], .menu-item i[data-icon], .topnav-item i[data-icon] { margin-right: 1px; }
+.like.on .icon, .topnav-item .heart .icon, #view-title .icon { fill: currentColor; }
+#view-title i[data-icon] { color: var(--accent); }
+.daw-section i[data-icon], .daw-lyric-section i[data-icon] { vertical-align: -0.2em; opacity: .85; }
+.yp-structure i[data-icon] { vertical-align: -0.2em; }

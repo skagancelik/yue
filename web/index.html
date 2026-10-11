@@ -27,8 +27,8 @@
     <header class="topbar">
       <div class="brand"><img src="serkanify-logo.svg" alt="serkanify" width="119" height="32"><span class="brand-studio">Studio</span></div>
       <nav class="topnav" aria-label="Bölümler">
-        <button type="button" class="topnav-item" data-top="folders">📁 Şarkılarım</button>
-        <button type="button" class="topnav-item" data-top="liked"><span class="heart">♥</span> Beğendiklerim<span id="liked-count" class="nav-count"></span></button>
+        <button type="button" class="topnav-item" data-top="folders"><i data-icon="folder"></i> Şarkılarım</button>
+        <button type="button" class="topnav-item" data-top="liked"><span class="heart"><i data-icon="heart"></i></span> Beğendiklerim<span id="liked-count" class="nav-count"></span></button>
       </nav>
       <div class="gpu">
         <span id="gpu-pill" class="pill"><span class="dot"></span><span id="gpu-text">…</span></span>
@@ -54,7 +54,7 @@
         <div id="drop" class="drop">
           <input id="file" type="file" accept="audio/*,.mp3,.wav,.flac,.m4a,.ogg,.opus,.aac,.webm,.aiff">
           <div id="drop-empty">
-            <div class="drop-icon">⬆</div>
+            <div class="drop-icon"><i data-icon="upload"></i></div>
             <div><b>Ses dosyası sürükle</b> veya tıkla</div>
             <div class="muted small">MP3, WAV, FLAC, M4A… en fazla 40 MB. Melodi bu besteden çıkarılır; dosya şarkının altında saklanır.</div>
           </div>
@@ -69,7 +69,7 @@
           <div id="prep-state" class="prep-state small"></div>
           <div class="progress indeterminate hidden" id="prep-progress"><div></div></div>
           <label id="prep-harmony" class="prep-harmony small hidden">
-            <span>🎹 Eşlik</span>
+            <span><i data-icon="piano"></i> Eşlik</span>
             <select id="prep-harmony-select" class="small-select" title="Akorlar, şarkının kayıttan çıkarılan armonisi. Onlarla gönderince eşlik o armoniye bağlı kalır; göndermeyince YuE2 kendi armonisini uydurur.">
               <option value="chords">Şarkının akorlarıyla (YuE2 bu akorlara göre çalar)</option>
               <option value="free">Akorsuz (eşliği YuE2 uydursun)</option>
@@ -77,9 +77,9 @@
             <span id="prep-harmony-count" class="muted"></span>
           </label>
           <div class="prep-actions">
-            <button type="button" id="prep-transcribe" class="btn ghost small hidden" title="Yalnızca melodiyi notaya çevir ve bestede sakla; düzenleme yapma">🎼 Sadece notayı çıkar</button>
-            <button type="button" id="prep-daw" class="btn ghost small hidden" title="Seçili eser tasarımının notasını, hecelerini ve izlerini zaman çizgisinde hazırla">🎛 Eser tasarımını aç</button>
-            <button type="button" id="prep-preview" class="btn ghost small hidden">👁 YuE2'ye gidecek hali</button>
+            <button type="button" id="prep-transcribe" class="btn ghost small hidden" title="Yalnızca melodiyi notaya çevir ve bestede sakla; düzenleme yapma"><i data-icon="music"></i> Sadece notayı çıkar</button>
+            <button type="button" id="prep-daw" class="btn ghost small hidden" title="Seçili eser tasarımının notasını, hecelerini ve izlerini zaman çizgisinde hazırla"><i data-icon="sliders-horizontal"></i> Eser tasarımını aç</button>
+            <button type="button" id="prep-preview" class="btn ghost small hidden"><i data-icon="eye"></i> YuE2'ye gidecek hali</button>
           </div>
         </div>
 
@@ -132,7 +132,7 @@
 
         <label class="check"><input id="stop-gpu" type="checkbox" checked> Düzenleme sonunda GPU'yu durdur <span class="muted small">(vokal ayrımı ve sıradaki işler bitince hemen kapanır, boşta beklemez)</span></label>
 
-        <button id="create" class="btn primary wide" disabled>🎤 Düzenleme yap</button>
+        <button id="create" class="btn primary wide" disabled><i data-icon="mic"></i> Düzenleme yap</button>
         <p id="create-note" class="muted small center"></p>
         <p id="create-error" class="error center"></p>
       </section>
@@ -156,7 +156,7 @@
 
         <div id="sources-block" class="block hidden">
           <div class="block-head">
-            <button type="button" id="source-upload" class="btn ghost small">⬆ Beste yükle</button>
+            <button type="button" id="source-upload" class="btn ghost small"><i data-icon="upload"></i> Beste yükle</button>
             <input id="source-file" type="file" multiple hidden accept="audio/*,.mp3,.wav,.flac,.m4a,.ogg,.opus,.aac,.webm,.aiff">
             <span class="muted small">Birden fazla dosya seçebilirsin · en fazla 40 MB</span>
             <label class="check credit-check"><input id="credit-upload" type="checkbox" checked> Söz &amp; Beste: Serkan Kağan Çelik ©️ Tüm Hakları Saklıdır</label>
@@ -170,14 +170,14 @@
           <div id="jobs-head" class="block-head"><h3 id="jobs-title">Beğenilen düzenlemeler</h3><span id="lib-count" class="muted small"></span></div>
           <div id="jobs" class="jobs"></div>
           <div id="empty" class="empty hidden">
-            <div class="drop-icon">🎧</div>
+            <div class="drop-icon"><i data-icon="headphones"></i></div>
             <p id="empty-text">Henüz düzenleme yok.</p>
           </div>
         </div>
       </section>
 
       <section id="no-folder" class="panel onboarding hidden">
-        <div class="drop-icon">📁</div>
+        <div class="drop-icon"><i data-icon="folder"></i></div>
         <h2>İlk şarkını oluştur</h2>
         <p class="muted">Her şarkın için burada bir yer aç; yüklediğin besteler ve düzenlemeler orada toplanır.</p>
         <form id="first-folder" class="inline-form">
@@ -192,7 +192,7 @@
   <template id="source-tpl">
     <div class="source">
       <div class="source-top">
-        <div class="job-title-row"><span class="source-name"></span><button type="button" class="icon-btn rename" title="Adı düzenle">✎</button></div>
+        <div class="job-title-row"><span class="source-name"></span><button type="button" class="icon-btn rename" title="Adı düzenle"><i data-icon="pencil"></i></button></div>
         <span class="source-meta muted small"></span>
       </div>
       <div class="credit source-credit hidden"></div>
@@ -202,9 +202,9 @@
       <div class="progress indeterminate source-progress hidden"><div></div></div>
       <div class="designs"></div>
       <div class="source-actions">
-        <button type="button" class="btn ghost small use" title="Eser tasarımı kullanmadan, doğrudan bu ses kaydından düzenleme: YuE2 melodiyi kayıttan kendisi çıkarır">🎧 Ses kaydından düzenle</button>
+        <button type="button" class="btn ghost small use" title="Eser tasarımı kullanmadan, doğrudan bu ses kaydından düzenleme: YuE2 melodiyi kayıttan kendisi çıkarır"><i data-icon="headphones"></i> Ses kaydından düzenle</button>
         <button type="button" class="btn ghost small score-act hidden"></button>
-        <button type="button" class="btn ghost small retranscribe hidden" title="Melodiyi yeniden notaya çevir; önceki çıkarmalar sürüm olarak kalır">🎼 Yeniden çıkar</button>
+        <button type="button" class="btn ghost small retranscribe hidden" title="Melodiyi yeniden notaya çevir; önceki çıkarmalar sürüm olarak kalır"><i data-icon="refresh-cw"></i> Yeniden çıkar</button>
         <button type="button" class="btn ghost small edit-text">Stil, söz, not</button>
         <button type="button" class="btn ghost small danger remove">Sil</button>
       </div>
@@ -224,15 +224,15 @@
   <template id="job-tpl">
     <article class="job">
       <div class="art">
-        <span class="art-note">♪</span>
-        <button type="button" class="art-play hidden" aria-label="Çal">▶</button>
+        <span class="art-note"><i data-icon="music"></i></span>
+        <button type="button" class="art-play hidden" aria-label="Çal"><i data-icon="play"></i></button>
       </div>
       <div class="job-body">
         <div class="job-top">
           <div class="job-main">
             <div class="job-title-row">
               <div class="job-title"></div>
-              <button type="button" class="icon-btn rename" title="Adı düzenle">✎</button>
+              <button type="button" class="icon-btn rename" title="Adı düzenle"><i data-icon="pencil"></i></button>
               <span class="dur hidden"></span>
             </div>
             <div class="job-style muted small"></div>
@@ -240,7 +240,7 @@
           </div>
           <div class="job-flags">
             <span class="badge"></span>
-            <button type="button" class="like" title="Beğen" aria-pressed="false">♡</button>
+            <button type="button" class="like" title="Beğen" aria-pressed="false"><i data-icon="heart"></i></button>
             <div class="menu-wrap">
               <button type="button" class="icon-btn menu-btn job-menu-btn" aria-haspopup="true" aria-expanded="false" title="İşlemler">⋯</button>
               <div class="menu hidden job-menu" role="menu"></div>
@@ -263,9 +263,9 @@
         </div>
         <div class="stems-error error small hidden"></div>
         <div class="job-foot">
-          <button type="button" class="btn ghost small lyrics-btn">📄 Sözler</button>
-          <button type="button" class="btn ghost small score-btn hidden" title="Besteden çıkarılan melodiyi nota olarak göster">🎼 Nota</button>
-          <button class="btn ghost small stems-btn hidden" title="Vokali ayırıp vokalsiz altyapı çıkar">🎙 Vokali ayır</button>
+          <button type="button" class="btn ghost small lyrics-btn"><i data-icon="file-text"></i> Sözler</button>
+          <button type="button" class="btn ghost small score-btn hidden" title="Besteden çıkarılan melodiyi nota olarak göster"><i data-icon="music"></i> Nota</button>
+          <button class="btn ghost small stems-btn hidden" title="Vokali ayırıp vokalsiz altyapı çıkar"><i data-icon="mic-vocal"></i> Vokali ayır</button>
           <span class="meta muted small"></span>
         </div>
       </div>
@@ -275,7 +275,7 @@
   <dialog id="lyrics-modal" class="modal">
     <div class="modal-head">
       <h3 id="lyrics-title"></h3>
-      <button type="button" id="lyrics-close" class="icon-btn" aria-label="Kapat">✕</button>
+      <button type="button" id="lyrics-close" class="icon-btn" aria-label="Kapat"><i data-icon="x"></i></button>
     </div>
     <pre id="lyrics-text" class="lyrics-text"></pre>
     <div class="modal-actions">
@@ -288,7 +288,7 @@
   <dialog id="score-modal" class="modal score-modal">
     <div class="modal-head">
       <h3 id="score-title"></h3>
-      <button type="button" id="score-close" class="icon-btn" aria-label="Kapat">✕</button>
+      <button type="button" id="score-close" class="icon-btn" aria-label="Kapat"><i data-icon="x"></i></button>
     </div>
     <div class="score-wrap">
       <p id="score-status" class="muted small"></p>
@@ -298,41 +298,41 @@
       <div id="score-paper" class="score-paper"></div>
     </div>
     <div class="modal-actions">
-      <button type="button" id="score-play" class="btn primary small" disabled>▶ Melodiyi çal</button>
-      <button type="button" id="score-print" class="btn ghost small" disabled>🖨 PDF / Yazdır</button>
-      <button type="button" id="score-midi" class="btn ghost small" disabled>⬇ MIDI</button>
-      <a id="score-abc" class="btn ghost small" rel="noopener">⬇ ABC</a>
-      <button type="button" id="score-daw" class="btn ghost small hidden" title="Notayı soldan sağa akan zaman çizgisinde aç: dinle, perde ve süreleri, bölümleri düzelt, heceleri kaydır, harfleri düzelt">🎛 Zaman çizgisinde düzenle</button>
+      <button type="button" id="score-play" class="btn primary small" disabled><i data-icon="play"></i> Melodiyi çal</button>
+      <button type="button" id="score-print" class="btn ghost small" disabled><i data-icon="printer"></i> PDF / Yazdır</button>
+      <button type="button" id="score-midi" class="btn ghost small" disabled><i data-icon="download"></i> MIDI</button>
+      <a id="score-abc" class="btn ghost small" rel="noopener"><i data-icon="download"></i> ABC</a>
+      <button type="button" id="score-daw" class="btn ghost small hidden" title="Notayı soldan sağa akan zaman çizgisinde aç: dinle, perde ve süreleri, bölümleri düzelt, heceleri kaydır, harfleri düzelt"><i data-icon="sliders-horizontal"></i> Zaman çizgisinde düzenle</button>
     </div>
   </dialog>
 
   <dialog id="daw" class="daw">
     <div class="daw-bar">
       <strong id="daw-title" class="daw-title"></strong>
-      <button type="button" id="daw-play" class="btn primary small daw-play" title="Çal / durdur (boşluk)">▶</button>
+      <button type="button" id="daw-play" class="btn primary small daw-play" title="Çal / durdur (boşluk)"><i data-icon="play"></i></button>
       <span id="daw-time" class="daw-time small"></span>
       <button type="button" id="daw-zoom-out" class="btn ghost small" title="Yatay uzaklaş (⌘/Ctrl + tekerlek ya da iki parmakla kıstır da olur)">−</button>
       <button type="button" id="daw-zoom-in" class="btn ghost small" title="Yatay yakınlaş: zaman ekseni genişler (⌘/Ctrl + tekerlek ya da iki parmakla aç da olur)">+</button>
       <button type="button" id="daw-after" class="btn ghost small" title="Seçili ilk heceden sonraki bütün heceleri de seç">→ Sonrakileri de seç</button>
-      <button type="button" id="daw-undo" class="btn ghost small" title="Geri al (⌘/Ctrl+Z)">↶ Geri al</button>
-      <button type="button" id="daw-tidy" class="btn ghost small" title="Notaları vuruşa oturt (sekizliklere; sıkışık yerlerde onaltılıklara), tek ölçüye getir; heceler notalarında kalır">🧲 Notaları hizala</button>
-      <button type="button" id="daw-auto" class="btn ghost small" title="Heceler melodinin cümlelerine göre yeniden yerleşsin">✨ Otomatik yerleştir</button>
+      <button type="button" id="daw-undo" class="btn ghost small" title="Geri al (⌘/Ctrl+Z)"><i data-icon="undo-2"></i> Geri al</button>
+      <button type="button" id="daw-tidy" class="btn ghost small" title="Notaları vuruşa oturt (sekizliklere; sıkışık yerlerde onaltılıklara), tek ölçüye getir; heceler notalarında kalır"><i data-icon="magnet"></i> Notaları hizala</button>
+      <button type="button" id="daw-auto" class="btn ghost small" title="Heceler melodinin cümlelerine göre yeniden yerleşsin"><i data-icon="sparkles"></i> Otomatik yerleştir</button>
       <span id="daw-selmode" class="seg" role="group" aria-label="Tıklayınca seç">
         <button type="button" data-mode="word" title="Tıklayınca bütün kelime seçilir (W)">Kelime</button>
         <button type="button" data-mode="syllable" title="Tıklayınca tek hece seçilir (W)">Hece</button>
       </span>
       <span class="daw-spacer"></span>
-      <button type="button" id="daw-preview" class="btn ghost small" title="Bu eser tasarımından YuE2'ye gidecek stil, söz ve notayı gör">👁 YuE2'ye gidecek hali</button>
+      <button type="button" id="daw-preview" class="btn ghost small" title="Bu eser tasarımından YuE2'ye gidecek stil, söz ve notayı gör"><i data-icon="eye"></i> YuE2'ye gidecek hali</button>
       <span id="daw-origin" class="muted small"></span>
-      <button type="button" id="daw-save" class="btn primary small" disabled>💾 Kaydet</button>
-      <button type="button" id="daw-close" class="icon-btn" aria-label="Kapat">✕</button>
+      <button type="button" id="daw-save" class="btn primary small" disabled><i data-icon="save"></i> Kaydet</button>
+      <button type="button" id="daw-close" class="icon-btn" aria-label="Kapat"><i data-icon="x"></i></button>
     </div>
     <div class="daw-tools">
       <div id="daw-compare" class="daw-compare small hidden"></div>
       <div id="daw-note-tools" class="daw-context hidden">
         <span id="daw-note-info" class="small daw-context-info"></span>
-        <button type="button" class="btn ghost small" data-note="prev" title="Önceki nota (←)">◀</button>
-        <button type="button" class="btn ghost small" data-note="next" title="Sonraki nota (→)">▶</button>
+        <button type="button" class="btn ghost small" data-note="prev" title="Önceki nota (←)"><i data-icon="chevron-left"></i></button>
+        <button type="button" class="btn ghost small" data-note="next" title="Sonraki nota (→)"><i data-icon="chevron-right"></i></button>
         <button type="button" class="btn ghost small" data-note="up" title="Yarım ses tiz (↑)">♯ ↑</button>
         <button type="button" class="btn ghost small" data-note="down" title="Yarım ses pes (↓)">♭ ↓</button>
         <button type="button" class="btn ghost small" data-note="octave-up" title="Bir oktav tiz (Shift+↑)">Oktav ↑</button>
@@ -341,8 +341,8 @@
         <button type="button" class="btn ghost small" data-note="shorter" title="Kısalt (S ya da −). Sözlü yerde devamı geri çekilir; sözsüz yerde sorar">Kısalt −</button>
         <select id="daw-step" class="small-select" aria-label="Adım" title="Uzat/Kısalt/Ötele/Ekle adımı"></select>
         <span class="daw-tool-group" title="Bu nota ve şarkının devamındaki notalar (vokalde sözleriyle) birlikte kayar">
-          <button type="button" class="btn ghost small" data-note="shift-back" title="Bu notayı ve devamını bir adım geri ötele (D ya da Alt+←)">⇤ Ötele</button>
-          <button type="button" class="btn ghost small" data-note="shift-on" title="Bu notayı ve devamını bir adım ileri ötele (F ya da Alt+→); istediğin kadar bas">Ötele ⇥</button>
+          <button type="button" class="btn ghost small" data-note="shift-back" title="Bu notayı ve devamını bir adım geri ötele (D ya da Alt+←)"><i data-icon="arrow-left-to-line"></i> Ötele</button>
+          <button type="button" class="btn ghost small" data-note="shift-on" title="Bu notayı ve devamını bir adım ileri ötele (F ya da Alt+→); istediğin kadar bas">Ötele <i data-icon="arrow-right-to-line"></i></button>
         </span>
         <button type="button" class="btn ghost small" data-note="insert" title="Önüne bir adım uzunluğunda yeni nota ekle; bu nota ve devamı ötelenir (I)">＋ Önüne nota</button>
         <button type="button" class="btn ghost small" data-note="rest" title="Notayı susa çevir (Delete)">Sus yap</button>
@@ -364,7 +364,7 @@
           <option value="outro">outro (bitiş)</option>
         </select>
         <button type="button" id="daw-set-section" class="btn ghost small">Bölüm yap</button>
-        <button type="button" id="daw-swap" class="btn ghost small" title="Seçili ölçülerde söylenen notalar enstrümana, enstrümanınkiler vokale geçer">🎤⇄🎹 Vokal ⇄ Enstrüman</button>
+        <button type="button" id="daw-swap" class="btn ghost small" title="Seçili ölçülerde söylenen notalar enstrümana, enstrümanınkiler vokale geçer"><i data-icon="arrow-left-right"></i> Vokal ⇄ Enstrüman</button>
       </div>
     </div>
     <div class="daw-body">
@@ -375,8 +375,8 @@
       <aside id="daw-side" class="daw-side">
         <div class="daw-side-head">
           <strong>Söz</strong>
-          <button type="button" id="daw-lyrics-edit" class="btn ghost small" title="Sözün metnini düzenle">✎ Sözü yaz</button>
-          <button type="button" id="daw-side-toggle" class="icon-btn" title="Söz panelini gizle / göster">⇥</button>
+          <button type="button" id="daw-lyrics-edit" class="btn ghost small" title="Sözün metnini düzenle"><i data-icon="pencil"></i> Sözü yaz</button>
+          <button type="button" id="daw-side-toggle" class="icon-btn" title="Söz panelini gizle / göster"><i data-icon="panel-right-close"></i></button>
         </div>
         <p class="muted small daw-side-hint">Kelimeye tıkla, satırı ⋮⋮ ile tut; zaman çizgisine sürükleyip başlayacağı notaya bırak.</p>
         <div id="daw-words" class="daw-words"></div>
@@ -394,7 +394,7 @@
       <div class="dt-row">
         <select id="dt-instrument" aria-label="Enstrüman"></select>
         <input id="dt-custom" class="hidden" type="text" maxlength="80" placeholder="İngilizce, örn. kanun, ney, 808 bass">
-        <button type="button" id="dt-close" class="icon-btn" aria-label="Kapat">✕</button>
+        <button type="button" id="dt-close" class="icon-btn" aria-label="Kapat"><i data-icon="x"></i></button>
       </div>
       <div class="muted small">Nasıl çalsın?</div>
       <div id="dt-feel" class="dt-feel"></div>
@@ -415,7 +415,7 @@
   <dialog id="yue-preview" class="modal yue-preview">
     <div class="modal-head">
       <h3 id="yp-title">YuE2'ye gidecekler</h3>
-      <button type="button" id="yp-close" class="icon-btn" aria-label="Kapat">✕</button>
+      <button type="button" id="yp-close" class="icon-btn" aria-label="Kapat"><i data-icon="x"></i></button>
     </div>
     <p class="muted small">YuE2 bir stil metni, bölüm etiketli sözler ve iki sesli (Vocal/Ins) bir nota okur. Hece yerleşimini ve izleri bu üçüne çeviren hazırlık:</p>
     <div id="yp-report" class="yp-report"></div>
@@ -428,33 +428,34 @@
     <details><summary>Nota (ABC)</summary><pre id="yp-abc" class="yp-pre"></pre></details>
     <h4>Gönderilecek istek</h4>
     <div id="yp-request" class="yp-request"></div>
-    <div class="yp-actions"><button type="button" id="yp-copy" class="btn ghost small" title="YuE2'ye gidecek isteğin tamamını (stil, söz, nota, mod, tohum) JSON olarak kopyala">📋 İsteği kopyala (JSON)</button><span id="yp-copied" class="muted small"></span></div>
+    <div class="yp-actions"><button type="button" id="yp-copy" class="btn ghost small" title="YuE2'ye gidecek isteğin tamamını (stil, söz, nota, mod, tohum) JSON olarak kopyala"><i data-icon="clipboard-copy"></i> İsteği kopyala (JSON)</button><span id="yp-copied" class="muted small"></span></div>
     <textarea id="yp-json" class="yp-json hidden" rows="10" readonly aria-label="İstek (JSON)"></textarea>
     <p id="yp-note" class="muted small"></p>
   </dialog>
 
   <div id="playerbar" class="playerbar hidden" role="region" aria-label="Oynatıcı">
     <div class="pb-now">
-      <div id="pb-art" class="pb-art">♪</div>
+      <div id="pb-art" class="pb-art"><i data-icon="music"></i></div>
       <div class="pb-meta"><div id="pb-title" class="pb-title"></div><div id="pb-sub" class="muted small"></div></div>
     </div>
     <div class="pb-center">
-      <button type="button" id="pb-play" class="pb-play" aria-label="Çal / duraklat">▶</button>
+      <button type="button" id="pb-play" class="pb-play" aria-label="Çal / duraklat"><i data-icon="play"></i></button>
       <span id="pb-cur" class="pb-time">0:00</span>
       <input id="pb-range" class="pb-range" type="range" min="0" max="1000" value="0" aria-label="Konum">
       <span id="pb-dur" class="pb-time">0:00</span>
     </div>
     <div class="pb-right">
       <div id="pb-mix" class="mixer-toggles hidden">
-        <button type="button" class="toggle inst on" aria-pressed="true" title="Altyapıyı aç/kapat">🎸 Altyapı</button>
-        <button type="button" class="toggle voc on" aria-pressed="true" title="Vokali aç/kapat">🎤 Vokal</button>
+        <button type="button" class="toggle inst on" aria-pressed="true" title="Altyapıyı aç/kapat"><i data-icon="guitar"></i> Altyapı</button>
+        <button type="button" class="toggle voc on" aria-pressed="true" title="Vokali aç/kapat"><i data-icon="mic"></i> Vokal</button>
       </div>
-      <button type="button" id="pb-mute" class="icon-btn" aria-label="Sesi kapat">🔊</button>
+      <button type="button" id="pb-mute" class="icon-btn" aria-label="Sesi kapat"><i data-icon="volume-2"></i></button>
       <input id="pb-vol" class="pb-vol" type="range" min="0" max="1" step="0.01" value="1" aria-label="Ses">
-      <button type="button" id="pb-close" class="icon-btn" aria-label="Oynatıcıyı kapat">✕</button>
+      <button type="button" id="pb-close" class="icon-btn" aria-label="Oynatıcıyı kapat"><i data-icon="x"></i></button>
     </div>
   </div>
 
+  <script src="icons.js"></script>
   <script src="score-model.js"></script>
   <script src="lyrics-layout.js"></script>
   <script src="timeline.js"></script>
