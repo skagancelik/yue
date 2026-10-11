@@ -5,6 +5,11 @@
 // Native layout: header up to K:, then groups of 1-4 bars. A group starts with "% label" lines
 // when a section starts, then "V: Vocal" and "V: Ins", each with optional M:/K: lines (a meter or
 // key change starts a group) and one music line. "Z" is a full-bar rest, "Z4" four of them.
+//
+// Chord symbols ("Am7", written in the Vocal line before the note or rest they start on) are kept
+// apart from the notes: bar.chords = [{ at, name }], `at` in L: units from the bar's start. Every
+// note operation works on chord-free bars; serialize writes the chords back at their places,
+// splitting a note (tied) or a rest where a chord starts inside it.
 
 const ScoreModel = (() => {
   const VOICES = ["vocal", "ins"];
@@ -14,15 +19,71 @@ const ScoreModel = (() => {
     if (!/\|$/.test(line) || /[:\[\]]\||\|[:\]]|\|\|/.test(line)) throw new Error(`${where}: desteklenmeyen ölçü çizgisi`);
     const bars = [];
     for (const bar of line.slice(0, -1).split("|")) {
-      const rest = bar.match(/^Z(\d*)$/);
-      if (rest) { for (let n = Number(rest[1] || 1); n > 0; n--) bars.push("Z"); continue; }
+      const rest = bar.match(/^((?:"[^"]*")*)Z(\d*)$/);
+      if (rest) { for (let n = Number(rest[2] || 1); n > 0; n--) bars.push(n === Number(rest[2] || 1) ? rest[1] + "Z" : "Z"); continue; }
       if (!bar.trim()) throw new Error(`${where}: boş ölçü`);
       bars.push(bar);
     }
     return bars;
   }
 
-  // { header: [lines], bars: [{ vocal, ins, labels: [], meter, key }] }
+  // A bar's text without its chord symbols, and the chords with the unit each one starts on.
+  // Annotations ("^text", "_text" …) are not chords; they are dropped.
+  function takeChords(text) {
+    const chords = [];
+    let out = "";
+    for (const piece of text.split(/("[^"]*")/)) {
+      const quoted = piece.match(/^"([^"]*)"$/);
+      if (!quoted) { out += piece; continue; }
+      const name = quoted[1].trim();
+      if (!name || /^[\^_<>@]/.test(name)) continue;
+      const before = out.trim();
+      const at = !before || before === "Z" ? 0 : tokenize(before, 0).reduce((sum, t) => sum + t.dur, 0);
+      chords.push({ at, name });
+    }
+    return { text: out.trim(), chords };
+  }
+
+  // A bar's text with its chords written in: each before the note or rest it starts on; one that
+  // starts inside a note splits it (tied, so it still sounds once), inside a rest splits the rest.
+  function withChords(text, chords, units) {
+    if (!chords || !chords.length) return text;
+    const tokens = text === "Z" ? [{ rest: true, dur: units, from: 0, to: 0 }] : tokenize(text, units);
+    const todo = chords.filter((c) => c.at >= 0 && c.at < units).sort((a, b) => a.at - b.at);
+    let out = "", u = 0, c = 0;
+    for (const token of tokens) {
+      const end = u + token.dur;
+      const cuts = [u];
+      let lead = "";
+      while (c < todo.length && todo[c].at <= u) lead += `"${todo[c++].name}"`;
+      const inside = [];
+      while (c < todo.length && todo[c].at < end) { inside.push(todo[c]); cuts.push(todo[c++].at); }
+      cuts.push(end);
+      const lengths = cuts.slice(1).map((x, k) => x - cuts[k]).filter((d, k) => d > 0 || k === 0);
+      if (token.rest) {
+        out += lead + lengths.map((d, k) => (k ? `"${inside[k - 1].name}"` : "") + parts(d).map((p) => "z" + (p > 1 ? p : "")).join("")).join("");
+      } else {
+        const raw = text.slice(token.from, token.to).match(/^((?:\^\^|__|\^|_|=)?)([A-Ga-g][,']*)(\d*)(-?)$/);
+        const [, acc, name] = raw;
+        out += lead + lengths.map((d, k) => (k ? `"${inside[k - 1].name}"` : "") + parts(d).map((p, i) => (i || k ? name : acc + name) + (p > 1 ? p : "")).join("-")).join("-")
+          + (token.tie ? "-" : "");
+      }
+      u = end;
+    }
+    return out;
+  }
+
+  // L: units of every bar (its meter's length).
+  function barUnits(model) {
+    const unit = Number((headerField(model, "L").split("/")[1]) || 8);
+    let meter = headerField(model, "M") || "4/4";
+    return model.bars.map((bar) => {
+      if (bar.meter) meter = bar.meter.slice(2).trim();
+      return unitsPerBar(meter, unit);
+    });
+  }
+
+  // { header: [lines], bars: [{ vocal, ins, labels: [], meter, key, chords: [{ at, name }] }] }
   function parse(abc) {
     const lines = abc.replace(/\r/g, "").split("\n");
     while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
@@ -34,10 +95,14 @@ const ScoreModel = (() => {
     const close = (n) => {
       if (!group) return;
       if (!group.vocal || !group.ins || group.vocal.length !== group.ins.length) throw new Error(`satır ${n}: Vocal ve Ins ölçü sayısı farklı`);
-      group.vocal.forEach((vocal, i) => bars.push({
-        vocal, ins: group.ins[i], labels: i ? [] : group.labels,
-        meter: i ? null : group.meter, key: i ? null : group.key,
-      }));
+      group.vocal.forEach((vocal, i) => {
+        const v = takeChords(vocal), s = takeChords(group.ins[i]);
+        bars.push({
+          vocal: v.text, ins: s.text, labels: i ? [] : group.labels,
+          meter: i ? null : group.meter, key: i ? null : group.key,
+          chords: [...v.chords, ...s.chords].sort((a, b) => a.at - b.at),
+        });
+      });
       group = null;
     };
     lines.slice(k + 1).forEach((line, i) => {
@@ -65,7 +130,16 @@ const ScoreModel = (() => {
     });
     close(lines.length);
     if (!bars.length) throw new Error("notada ölçü yok");
-    return { header, bars };
+    // A bar that was all rest under its chords is a full-bar rest again.
+    const model = { header, bars };
+    const units = barUnits(model);
+    bars.forEach((bar, b) => {
+      if (!bar.chords.length) return;
+      for (const voice of VOICES) {
+        if (/^(z\d*)+$/.test(bar[voice]) && tokenize(bar[voice], units[b]).reduce((sum, t) => sum + t.dur, 0) === units[b]) bar[voice] = "Z";
+      }
+    });
+    return model;
   }
 
   const isRest = (bar) => bar === "Z";
@@ -78,6 +152,8 @@ const ScoreModel = (() => {
     const ranges = [];   // { bar, voice, from, to }
     let length = out.reduce((sum, line) => sum + line.length + 1, 0);
     const push = (line) => { out.push(line); length += line.length + 1; };
+    const units = barUnits(model);
+    const text = (bar, index, voice) => (voice === "vocal" ? withChords(bar.vocal, bar.chords, units[index]) : bar[voice]);
     const groups = [];
     model.bars.forEach((bar, index) => {
       const last = groups[groups.length - 1];
@@ -96,16 +172,17 @@ const ScoreModel = (() => {
         for (let g = 0; g < group.length; g++) {
           const index = group[g];
           const bar = model.bars[index];
-          if (!annotate && isRest(bar[voice])) {
+          const own = text(bar, index, voice);
+          if (!annotate && isRest(own)) {
             let run = 1;
-            while (g + run < group.length && isRest(model.bars[group[g + run]][voice])) run++;
+            while (g + run < group.length && isRest(text(model.bars[group[g + run]], group[g + run], voice))) run++;
             line += (run > 1 ? `Z${run}` : "Z") + "|";
             g += run - 1;
             continue;
           }
           const label = annotate && voice === "vocal" && bar.labels.length ? `"^${bar.labels[bar.labels.length - 1]}"` : "";
-          spans.push({ bar: index, from: line.length, label: label.length, text: label + bar[voice] });
-          line += label + bar[voice] + "|";
+          spans.push({ bar: index, from: line.length, label: label.length, text: label + own });
+          line += label + own + "|";
         }
         // start: where the bar's own notes begin (after a section annotation).
         for (const span of spans) {
@@ -703,8 +780,38 @@ const ScoreModel = (() => {
     const from = Math.min(...all.map((n) => n.u0)), to = Math.max(...all.map((n) => n.u0 + n.dur));
     const clip = { length: to - from };
     for (const voice of VOICES) clip[voice] = taken[voice].map((n) => ({ off: n.u0 - from, dur: n.dur, midi: n.midi }));
+    // The chords starting under the clip go with it.
+    clip.chords = chordLine(model).filter((c) => c.u >= from && c.u < to).map((c) => ({ off: c.u - from, name: c.name }));
     return clip;
   }
+
+  // Every chord on the song's time axis: [{ u, name }].
+  function chordLine(model) {
+    const units = barUnits(model);
+    const out = [];
+    let u = 0;
+    model.bars.forEach((bar, b) => {
+      for (const c of bar.chords || []) out.push({ u: u + c.at, name: c.name });
+      u += units[b];
+    });
+    return out;
+  }
+
+  // The chords put back into the bars from one time axis (those past the end are dropped).
+  function placeChords(model, line) {
+    const units = barUnits(model);
+    let u = 0;
+    const bars = model.bars.map((bar, b) => {
+      const s = u, e = u + units[b];
+      u = e;
+      const chords = line.filter((c) => c.u >= s && c.u < e).sort((x, y) => x.u - y.u).map((c) => ({ at: c.u - s, name: c.name }));
+      return (bar.chords || []).length || chords.length ? { ...bar, chords } : bar;
+    });
+    return { ...model, bars };
+  }
+
+  const hasChords = (model) => model.bars.some((bar) => (bar.chords || []).length);
+  const withoutChords = (model) => ({ ...model, bars: model.bars.map((bar) => ((bar.chords || []).length ? { ...bar, chords: [] } : bar)) });
 
   // A clip put in at unit `at`, its first note there, making room: everything from `at` on, in both
   // voices, moves on by the clip's length. A note sounding across `at` moves on whole (the clip goes
@@ -717,13 +824,18 @@ const ScoreModel = (() => {
       if (!across) break;
       at = across.u0;
     }
+    const chords = chordLine(model).map((c) => (c.u >= at ? { ...c, u: c.u + clip.length } : c))
+      .concat((clip.chords || []).map((c) => ({ u: at + c.off, name: c.name })));
     let out = model;
     for (const voice of VOICES) {
       const next = lines[voice].map((n) => (n.u0 >= at ? { ...n, u0: n.u0 + clip.length } : n));
       for (const c of clip[voice]) next.push({ u0: at + c.off, dur: c.dur, midi: c.midi });
       out = writeLine(out, voice, next);
     }
-    return { model: out, at };
+    // The harmony moves on with the music after the paste; a pasted chord replaces one at its place.
+    const placed = new Map();
+    for (const c of chords) placed.set(c.u, c);
+    return { model: placeChords(out, [...placed.values()]), at };
   }
 
   // The notes starting on the units in `pick` ({ vocal: [u0], ins: [u0] }) moved `by` units and
@@ -761,7 +873,7 @@ const ScoreModel = (() => {
   }
 
   return { parse, serialize, sections, sectionOf, setSection, swapVoices, tieSafeRange,
-    voiceNotes, editNote, moveNote, voiceLine, writeLine, shiftFrom, resizeNote, insertBefore, removeNotes, clipNotes, pasteNotes, moveNotes, writeBar, pitchName, unitDenominator: (m) => Number((headerField(m, "L").split("/")[1]) || 8) };
+    voiceNotes, editNote, moveNote, voiceLine, writeLine, chordLine, placeChords, hasChords, withoutChords, shiftFrom, resizeNote, insertBefore, removeNotes, clipNotes, pasteNotes, moveNotes, writeBar, pitchName, unitDenominator: (m) => Number((headerField(m, "L").split("/")[1]) || 8) };
 })();
 
 if (typeof module !== "undefined") module.exports = ScoreModel;

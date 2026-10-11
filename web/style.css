@@ -518,3 +518,7 @@ body.has-player { padding-bottom: 88px; }
 .yp-request b { font-weight: 600; }
 .yp-actions { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
 .yp-json { margin-top: 8px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.prep-harmony { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+.prep-harmony select { width: auto; max-width: 100%; }
+.daw-chords { background: var(--panel); }
+.daw-chord { position: absolute; top: 2px; height: 15px; border-left: 2px solid #6b8cff; padding: 0 4px; font-size: 11px; line-height: 15px; color: #c9d4ff; overflow: hidden; white-space: nowrap; box-sizing: border-box; }

@@ -138,6 +138,37 @@ test("compile names empty lyric tags like the unsung bars of the score where the
   assert.ok(out.lyrics.includes("\n[Solo]\n"), out.lyrics);
 });
 
+test("chords: kept apart from the notes, written back where they start, carried by edits and pastes", () => {
+  const abc = 'X:1\nL:1/8\nM:4/4\nK:C\n% verse\nV: Vocal\n"C"c4"Am"d4|"F"Z|e8|\nV: Ins\nZ3|\n';
+  const model = ScoreModel.parse(abc);
+  assert.deepStrictEqual(model.bars.map((b) => [b.vocal, b.chords.map((c) => `${c.at}:${c.name}`)]),
+    [["c4d4", ["0:C", "4:Am"]], ["Z", ["0:F"]], ["e8", []]]);
+  assert.strictEqual(ScoreModel.serialize(model).text, abc.replace('"F"Z|', '"F"z8|'), "a chord on a full-bar rest is not compressed");
+  // A chord inside a note splits it with a tie; inside a rest it splits the rest; reading it back gives the same.
+  const split = { ...model, bars: model.bars.map((b, i) => (i === 2 ? { ...b, chords: [{ at: 2, name: "G7" }] } : i === 1 ? { ...b, chords: [{ at: 6, name: "C" }] } : b)) };
+  const text = ScoreModel.serialize(split).text;
+  assert.ok(text.includes('|z6"C"z2|e2-"G7"e6|'), text);
+  const back = ScoreModel.parse(text);
+  assert.deepStrictEqual(back.bars.map((b) => b.chords), split.bars.map((b) => b.chords));
+  assert.deepStrictEqual(ScoreModel.voiceLine(back, "vocal").notes.map((n) => n.dur), [4, 4, 8], "the tied parts are one note");
+  // Note edits keep the bar's chords.
+  const edited = ScoreModel.editNote(model, "vocal", { bar: 0, note: 1 }, "pitch", { semitones: 2 }).model;
+  assert.deepStrictEqual(edited.bars[0].chords, model.bars[0].chords);
+  // A paste moves the chords after it on with the music and brings the clip's chords along.
+  const clip = ScoreModel.clipNotes(model, { vocal: [4] });
+  assert.deepStrictEqual(clip.chords, [{ off: 0, name: "Am" }]);
+  const pasted = ScoreModel.pasteNotes(model, 8, clip).model;
+  assert.deepStrictEqual(ScoreModel.chordLine(pasted), [{ u: 0, name: "C" }, { u: 4, name: "Am" }, { u: 8, name: "Am" }, { u: 12, name: "F" }]);
+  // Sent with the chords: mode full; without: they are left out and the mode is melody.
+  const withChords = Arrange.compile({ abc, lyrics: "", map: [], style: "pop" });
+  assert.strictEqual(withChords.cot, "full");
+  assert.ok(withChords.abc.includes('"C"c4"Am"d4|'));
+  const free = Arrange.compile({ abc, lyrics: "", map: [], style: "pop", chords: false });
+  assert.strictEqual(free.cot, "melody");
+  assert.ok(!free.abc.includes('"'), free.abc);
+  assert.strictEqual(Arrange.compile({ abc: ABC, lyrics: "", map: [], style: "pop" }).cot, "melody", "a score without chords is melody");
+});
+
 test("scopeText names sections and bars", () => {
   const model = ScoreModel.parse(ABC);
   const runs = ScoreModel.sections(model);
@@ -261,7 +292,7 @@ test("removeNotes, clipNotes and pasteNotes: delete, copy and paste making room"
   assert.strictEqual(gone.bars[0].vocal, "c8z24");
   assert.strictEqual(gone.bars[1].vocal, "g16e16", "the rest stays where it was");
   const clip = ScoreModel.clipNotes(model, { vocal: [8, 16] });
-  assert.deepStrictEqual(clip, { length: 16, vocal: [{ off: 0, dur: 8, midi: 74 }, { off: 8, dur: 8, midi: 76 }], ins: [] });
+  assert.deepStrictEqual(clip, { length: 16, vocal: [{ off: 0, dur: 8, midi: 74 }, { off: 8, dur: 8, midi: 76 }], ins: [], chords: [] });
   // Pasted inside c (unit 4): the clip goes in front of it, everything (Ins too) moves 16 on.
   const pasted = ScoreModel.pasteNotes(model, 4, clip);
   assert.strictEqual(pasted.at, 0);

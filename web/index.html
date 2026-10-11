@@ -68,6 +68,14 @@
         <div id="prep" class="prep hidden">
           <div id="prep-state" class="prep-state small"></div>
           <div class="progress indeterminate hidden" id="prep-progress"><div></div></div>
+          <label id="prep-harmony" class="prep-harmony small hidden">
+            <span>🎹 Eşlik</span>
+            <select id="prep-harmony-select" class="small-select" title="Akorlar, şarkının kayıttan çıkarılan armonisi. Onlarla gönderince eşlik o armoniye bağlı kalır; göndermeyince YuE2 kendi armonisini uydurur.">
+              <option value="chords">Şarkının akorlarıyla (YuE2 bu akorlara göre çalar)</option>
+              <option value="free">Akorsuz (eşliği YuE2 uydursun)</option>
+            </select>
+            <span id="prep-harmony-count" class="muted"></span>
+          </label>
           <div class="prep-actions">
             <button type="button" id="prep-transcribe" class="btn ghost small hidden" title="Yalnızca melodiyi notaya çevir ve bestede sakla; düzenleme yapma">🎼 Sadece notayı çıkar</button>
             <button type="button" id="prep-daw" class="btn ghost small hidden" title="Seçili eser tasarımının notasını, hecelerini ve izlerini zaman çizgisinde hazırla">🎛 Eser tasarımını aç</button>

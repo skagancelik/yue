@@ -254,11 +254,21 @@ const Arrange = (() => {
 
   // abc: the score; lyrics: the lyrics (with corrected letters); map: the note of every syllable on
   // that score (null = none; another length means "lay them out automatically"); tracks; style: the
-  // style as written. Returns { abc, lyrics, style, at, map, report, structure }.
-  function compile({ abc, lyrics, map, tracks = [], style = "", options = {} }) {
+  // style as written; chords: false to leave the score's chords out (the accompaniment is then
+  // YuE2's own). Returns { abc, lyrics, style, cot, chords, at, map, report, structure }: cot is
+  // "full" when chords go with the score (YuE2 plays to them), else "melody".
+  function compile({ abc, lyrics, map, tracks = [], style = "", chords = true, options = {} }) {
     const opts = { instrumentalize: true, sections: true, bpm: true, ...options };
     const report = [];
     let model = ScoreModel.parse(abc);
+    const had = ScoreModel.chordLine(model).length;
+    if (had && !chords) {
+      model = ScoreModel.withoutChords(model);
+      report.push({ kind: "ok", text: `Notadaki ${had} akor gönderilmiyor: eşliği (armoniyi) YuE2 kendisi uyduracak (mod: melody).` });
+    } else if (had) {
+      report.push({ kind: "ok", text: `Notadaki ${had} akor gidiyor: YuE2 eşliği şarkının bu akorlarına göre çalacak (mod: full).` });
+    }
+    const cot = had && chords ? "full" : "melody";
     let tl = Timeline.fromModel(model);
     const sylls = LyricsLayout.allSyllables(lyrics);
     if (!Array.isArray(map) || map.length !== sylls.length) {
@@ -305,7 +315,7 @@ const Arrange = (() => {
     tl = Timeline.build(out);
     const structure = ScoreModel.sections(model).map((run) => ({ label: run.label, from: run.from, to: run.to, sung: run.sung }));
     const finalStyle = composeStyle(style, tracks, model, opts);
-    return { abc: out, lyrics: outLyrics, style: finalStyle, at: Timeline.onsets(tl, map), map, report, structure };
+    return { abc: out, lyrics: outLyrics, style: finalStyle, cot, chords: cot === "full" ? had : 0, at: Timeline.onsets(tl, map), map, report, structure };
   }
 
   return { compile, sungNotes, composeStyle, trackPhrase, scopeText, canon, tagText, INSTRUMENTS, FEELS, feelLabel, instrumentLabel };

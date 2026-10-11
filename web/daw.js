@@ -195,12 +195,25 @@ function renderDaw() {
     sections.append(block);
   }
 
+  // The song's chords (from the melody extraction): where each starts. They stay where they are in
+  // the song when notes are edited; a paste moves the ones after it on with the music.
+  const chordLane = tl.chords.length ? lane("Akor", 20, "daw-chords") : null;
+  if (chordLane) {
+    tl.chords.forEach((chord, i) => {
+      const next = tl.chords[i + 1];
+      const end = next ? next.t0 : tl.duration;
+      const box = el("div", "daw-chord", { left: dawX(chord.t0) + "px", width: Math.max(14, (end - chord.t0) * daw.pps - 2) + "px" }, chord.name);
+      box.title = `${chord.name} · ölçü ${chord.bar + 1}${daw.design && daw.design.harmony === "free" ? " (bu eser tasarımı akorları göndermiyor)" : ""}`;
+      chordLane.append(box);
+    });
+  }
+
   // Piano roll: vocal notes over faded instrument notes; vocal rests along the bottom.
   const pitches = [...tl.vocal, ...tl.ins].map((n) => n.midi);
   const top = Math.max(...pitches, 72) + 2, low = Math.min(...pitches, 55) - 2;
   // The roll takes the height the other lanes leave free.
   const trackHeight = daw.ctx === "source" ? 22 + daw.tracks.length * 30 : 0;
-  const free = $("daw-scroll").clientHeight - 26 - 24 - 20 - 34 - 20 - trackHeight;
+  const free = $("daw-scroll").clientHeight - 26 - 24 - (chordLane ? 20 : 0) - 20 - 34 - 20 - trackHeight;
   const row = Math.max(4, Math.min(16, Math.floor((free - 10) / (top - low + 1))));
   const rollHeight = (top - low + 1) * row + 10;
   const roll = lane("Melodi", rollHeight, "daw-roll");
@@ -276,7 +289,7 @@ function renderDaw() {
     if (!words.slots[n] && note) syl.append(el("div", "daw-hold", { left: dawX(note.t0) + "px", width: Math.max(2, (note.t1 - note.t0) * daw.pps - 1) + "px" }));
   }
 
-  lanes.append(ruler, sections, roll, lyricLane, syl);
+  lanes.append(...[ruler, sections, chordLane, roll, lyricLane, syl].filter(Boolean));
 
   // Instrument tracks (source songs only): what plays how, and where (painted bars).
   if (daw.ctx === "source") {
@@ -1951,7 +1964,8 @@ function dawBaseStyle() {
 
 $("daw-preview").addEventListener("click", () => {
   try {
-    const compiled = Arrange.compile({ abc: daw.abc, lyrics: daw.lyrics, map: daw.map, tracks: daw.tracks, style: dawBaseStyle() });
+    const compiled = Arrange.compile({ abc: daw.abc, lyrics: daw.lyrics, map: daw.map, tracks: daw.tracks, style: dawBaseStyle(),
+      chords: !(daw.design && daw.design.harmony === "free") });
     showYuePreview(compiled, daw.design ? `${daw.item.name} · ${daw.design.name}` : daw.job.title, dawDirty() || daw.layoutFresh);
   } catch (error) { dawMsg(`Önizleme hazırlanamadı: ${error.message}`); }
 });
