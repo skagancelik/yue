@@ -110,18 +110,21 @@
         <div class="hint muted small">İpucu: Bölüm sırası ve hece sayısı orijinal melodiye ne kadar yakınsa sonuç o kadar iyi olur.</div>
         <button type="button" id="source-text-save" class="btn ghost small hidden">Stil ve sözü besteye kaydet</button>
 
+        <label class="field-label" for="cfg-scale">5 · Üretim</label>
+        <div class="row gen-row">
+          <label>Stile bağlılık
+            <select id="cfg-scale" title="YuE2 stil metnine ve söze ne kadar sıkı uysun (cfg_scale)"><option value="">Normal</option><option value="1.2">Güçlü (1.2)</option><option value="1.5">Çok güçlü (1.5)</option></select>
+          </label>
+          <label>Varyasyon
+            <select id="variants"><option value="1">1 düzenleme</option><option value="2">2 düzenleme (farklı seed)</option></select>
+          </label>
+          <label>Seed <input id="seed" type="number" min="0" max="2147483647" placeholder="rastgele"></label>
+        </div>
+        <div class="hint muted small">Stile bağlılık: YuE2 stil metnine ve söze ne kadar sıkı uysun; Güçlü ve Çok güçlü üretimi yavaşlatır. Seed aynı kalırsa aynı ayarlar aynı sonucu verir; bir ayarın etkisini duymak için seed'i sabitle. Her düzenlemenin seed'i kartında yazar; tıklayınca buraya gelir.</div>
+
         <details class="advanced">
           <summary>Gelişmiş</summary>
           <label class="check"><input id="auto-stems" type="checkbox" checked> Altyapı ve vokalı da ayır <span class="muted small">(düzenleme başına ~3 dk ek GPU)</span></label>
-          <div class="row">
-            <label>Varyasyon
-              <select id="variants"><option value="1">1 düzenleme</option><option value="2">2 düzenleme (farklı seed)</option></select>
-            </label>
-            <label>Seed <input id="seed" type="number" min="0" max="2147483647" placeholder="rastgele"></label>
-            <label>Stile bağlılık
-              <select id="cfg-scale" title="YuE2 stil metnine ve söze ne kadar sıkı uysun (cfg_scale)"><option value="">Normal (YuE2 varsayılanı)</option><option value="1.2">Güçlü (1.2) · daha yavaş</option><option value="1.5">Çok güçlü (1.5) · daha yavaş</option></select>
-            </label>
-          </div>
         </details>
 
         <label class="check"><input id="stop-gpu" type="checkbox" checked> Düzenleme sonunda GPU'yu durdur <span class="muted small">(vokal ayrımı ve sıradaki işler bitince hemen kapanır, boşta beklemez)</span></label>

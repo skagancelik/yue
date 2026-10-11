@@ -1216,7 +1216,18 @@ function fillJob(node, job) {
   error.textContent = job.error || "";
   const from = job.design_name ? ` · 🎼 eser tasarımı «${job.design_name}»${job.cot === "full" ? " · akorlarıyla" : ""}`
     : { prepared: " · 🎛 hazırlanmış nota", edited: " · 🎼 düzeltilmiş nota", transcript: " · 🎼 çıkarılmış nota" }[job.score_from] || (job.status ? " · 🎧 ses kaydından" : "");
-  node.querySelector(".meta").textContent = fmtAgo(job.created_at) + from + (job.cfg_scale ? ` · stile bağlılık ${job.cfg_scale}` : "");
+  const meta = node.querySelector(".meta");
+  meta.textContent = fmtAgo(job.created_at) + from + (job.cfg_scale ? ` · stile bağlılık ${job.cfg_scale}` : "");
+  if (job.seed != null) {
+    // The seed, to make the same arrangement again with one setting changed.
+    const seed = document.createElement("button");
+    seed.type = "button";
+    seed.className = "seed-link";
+    seed.textContent = `seed ${job.seed}`;
+    seed.title = "Bu seed'i Üretim ayarlarına yaz (aynı seed + farklı ayar = farkı duyarsın)";
+    seed.onclick = () => { $("seed").value = String(job.seed); $("seed").focus(); $("seed").scrollIntoView({ block: "center", behavior: "smooth" }); updateCreate(); };
+    meta.append(" · ", seed);
+  }
   node.querySelector(".rename").onclick = async () => {
     const title = prompt("Şarkı adı", job.title);
     if (!title || !title.trim() || title.trim() === job.title) return;
