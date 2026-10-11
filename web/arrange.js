@@ -318,7 +318,28 @@ const Arrange = (() => {
     return { abc: out, lyrics: outLyrics, style: finalStyle, cot, chords: cot === "full" ? had : 0, at: Timeline.onsets(tl, map), map, report, structure };
   }
 
-  return { compile, sungNotes, composeStyle, trackPhrase, scopeText, canon, tagText, INSTRUMENTS, FEELS, feelLabel, instrumentLabel };
+  // The chords of another score of the same recording (a newer melody extraction) put into this
+  // one by time: each where it starts in seconds, on the nearest eighth note. The notes, and so
+  // the syllables on them, stay as they are; the score's own chords are replaced. Returns
+  // { abc, count, dropped, tempo: [this bpm, that bpm] }.
+  function borrowChords(abc, from) {
+    const model = ScoreModel.parse(abc), other = ScoreModel.parse(from);
+    const tl = Timeline.fromModel(model), otl = Timeline.fromModel(other);
+    const total = tl.bars.length ? tl.bars[tl.bars.length - 1].u1 : 0;
+    const eighth = Math.max(1, tl.unit / 8);
+    const line = [];
+    let dropped = 0;
+    for (const chord of otl.chords) {
+      const u = Math.round(chord.t0 / tl.perUnit / eighth) * eighth;
+      if (u < 0 || u >= total) { dropped++; continue; }
+      const same = line.findIndex((c) => c.u === u);
+      if (same >= 0) line[same] = { u, name: chord.name }; else line.push({ u, name: chord.name });
+    }
+    const out = ScoreModel.placeChords(ScoreModel.withoutChords(model), line);
+    return { abc: ScoreModel.serialize(out).text, count: line.length, dropped, tempo: [tl.bpm, otl.bpm] };
+  }
+
+  return { compile, borrowChords, sungNotes, composeStyle, trackPhrase, scopeText, canon, tagText, INSTRUMENTS, FEELS, feelLabel, instrumentLabel };
 })();
 
 if (typeof module !== "undefined") module.exports = Arrange;
