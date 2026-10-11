@@ -246,6 +246,8 @@ def process(job):
             source = work / Path(job["upload_key"]).name
             s3.download_file(BUCKET, job["upload_key"], str(source))
         update_job(job_id, stage="submitting", message="Modele gönderiliyor")
+        # Stronger style guidance when the job asks for it (YuE2's cfg_scale; left out = its default).
+        guidance = {"cfg_scale": float(job["cfg_scale"])} if job.get("cfg_scale") is not None else {}
         # The inference worker restarts itself after a failed job; wait instead of failing.
         deadline = time.time() + 10 * 60
         while True:
@@ -255,13 +257,14 @@ def process(job):
                 response = requests.post(
                     f"{TURBO}/v1/jobs", headers=headers, timeout=120,
                     json={"style": job["style"], "lyrics": job["lyrics"], "seed": int(job["seed"]),
-                          "cot": job.get("cot") or "melody", "abc": score})
+                          "cot": job.get("cot") or "melody", "abc": score, **guidance})
             else:
                 with source.open("rb") as handle:
                     response = requests.post(
                         f"{TURBO}/v1/covers", headers=headers,
                         files={"audio": (source.name, handle)},
-                        data={"style": job["style"], "lyrics": job["lyrics"], "seed": str(int(job["seed"]))},
+                        data={"style": job["style"], "lyrics": job["lyrics"], "seed": str(int(job["seed"])),
+                              **{k: str(v) for k, v in guidance.items()}},
                         timeout=120)
             if response.status_code != 503 or time.time() > deadline:
                 break

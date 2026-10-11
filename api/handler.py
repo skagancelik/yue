@@ -9,6 +9,7 @@ from decimal import Decimal
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
 import time
@@ -238,6 +239,7 @@ def public_job(job):
         "created_at", "started_at", "finished_at", "duration", "source_name", "tokens", "variant",
         "upload_key", "folder_id", "source_id", "stems_status", "stems_message", "stems_error", "lyrics_start", "lyrics_layout",
         "style_base", "design_id", "design_name")}
+    out["cfg_scale"] = float(job["cfg_scale"]) if job.get("cfg_scale") is not None else None
     out["cot"] = job.get("cot") or ("melody" if job.get("score_key") else None)
     # Where the score YuE2 got came from: "prepared" (laid out in the timeline and converted by the
     # browser), "edited" (the source's corrected score), "transcript" (the source's saved transcription),
@@ -371,6 +373,12 @@ def create_jobs(body):
         raise HttpError(400, "cot melody ya da full olmalı")
     if cot == "full" and score_text is None and not score_key:
         raise HttpError(400, "cot=full yalnızca bir notayla (eser tasarımı) kullanılabilir")
+    # How strongly YuE2 follows the style and lyrics (classifier-free guidance). None = YuE2's own
+    # default (1.0 with a score). Anything else runs YuE2's slower PyTorch path.
+    cfg_scale = body.get("cfg_scale")
+    if cfg_scale is not None and (isinstance(cfg_scale, bool) or not isinstance(cfg_scale, (int, float))
+                                  or not math.isfinite(cfg_scale) or not 1 <= cfg_scale <= 3):
+        raise HttpError(400, "cfg_scale 1 ile 3 arasında bir sayı olmalı")
     seed = body.get("seed")
     if seed is None:
         seed = int.from_bytes(os.urandom(4), "big") & 0x7FFFFFFF
@@ -404,6 +412,8 @@ def create_jobs(body):
                                ContentType="text/plain; charset=utf-8", MetadataDirective="REPLACE")
         if cot == "full":
             job["cot"] = "full"
+        if cfg_scale is not None and cfg_scale != 1:
+            job["cfg_scale"] = Decimal(str(round(float(cfg_scale), 2)))
         if style_base and style_base != style:
             job["style_base"] = style_base   # the style as written, before the tracks were added to it
         if layout:
