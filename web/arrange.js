@@ -325,6 +325,26 @@ const Arrange = (() => {
     return { abc: out, lyrics: outLyrics, style: finalStyle, cot, chords: cot === "full" ? had : 0, at: Timeline.onsets(tl, map), map, report, structure };
   }
 
+  // An instrumental version of a compiled request: no words are sent, the melody the lyrics would
+  // be sung on is played by the instrument voice over the same chords, sections and tempo, so the
+  // backing leaves its places to the melody. Lyrics keep only their section tags; the style says
+  // instrumental and loses its voice descriptions. Returns the request with its report extended.
+  function instrumentalVersion(compiled) {
+    // Notes about syllables do not apply: no words are sent.
+    const report = compiled.report.filter((r) => !/hece/i.test(r.text));
+    const moved = ScoreModel.melodyToIns(ScoreModel.parse(compiled.abc));
+    const tags = compiled.lyrics.split("\n").map((line) => line.trim()).filter((line) => /^\[[^\]]+\]$/.test(line));
+    const parts = compiled.style.split(",").map((p) => p.trim()).filter(Boolean);
+    const voice = /vocal|voice|singer|sung|sing|choir|rap\b|vokal|şarkıcı/i;
+    const dropped = parts.filter((p) => voice.test(p));
+    const style = ["Instrumental", "no vocals", ...parts.filter((p) => !voice.test(p) && !/^instrumental$|^no vocals$/i.test(p)),
+      "expressive lead instrument plays the melody"].join(", ");
+    report.push({ kind: "ok", text: `Enstrümantal: ${moved.moved} vokal notası enstrüman sesine geçti; söz gitmiyor, yalnız bölüm etiketleri (${tags.length}) gidiyor.` });
+    if (moved.cut) report.push({ kind: "warn", text: `${moved.cut} enstrüman notası vokal melodisiyle çakıştığı için kısaltıldı ya da kaldırıldı (enstrüman sesi tek melodi çalabilir).` });
+    if (dropped.length) report.push({ kind: "ok", text: `Stilden vokal tarifi çıkarıldı: ${dropped.join(", ")}.` });
+    return { ...compiled, abc: ScoreModel.serialize(moved.model).text, lyrics: tags.join("\n\n"), style, report, instrumental: true };
+  }
+
   // The chords of another score of the same recording (a newer melody extraction) put into this
   // one by time: each where it starts in seconds, on the nearest eighth note. The notes, and so
   // the syllables on them, stay as they are; the score's own chords are replaced. Returns
@@ -436,7 +456,7 @@ const Arrange = (() => {
     return { abc: ScoreModel.serialize(out).text, count: line.length, key: key.name };
   }
 
-  return { compile, borrowChords, suggestChords, sungNotes, composeStyle, trackPhrase, scopeText, canon, tagText, INSTRUMENTS, FEELS, feelLabel, instrumentLabel };
+  return { compile, instrumentalVersion, borrowChords, suggestChords, sungNotes, composeStyle, trackPhrase, scopeText, canon, tagText, INSTRUMENTS, FEELS, feelLabel, instrumentLabel };
 })();
 
 if (typeof module !== "undefined") module.exports = Arrange;

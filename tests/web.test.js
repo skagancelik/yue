@@ -207,6 +207,21 @@ test("tidy puts a phrase back on the beat and folds a lone 2/4 bar away, keeping
   assert.deepStrictEqual(ScoreModel.voiceLine(runOut, "vocal").notes.map((n) => [n.u0, n.dur]), [[0, 4], [4, 4], [8, 8]]);
 });
 
+test("instrumentalVersion sends no words: the vocal melody goes to the instrument over the same chords", () => {
+  const abc = "X:1\nL:1/8\nM:4/4\nQ:1/4=100\nK:C\n% verse\nV: Vocal\n\"C\"c2d2e2f2|\"G\"g4z4|\nV: Ins\nz4c'4|e4g4|\n";
+  const compiled = Arrange.compile({ abc, lyrics: "[Verse]\nbir iki üç dört beş", style: "Turkish, warm male vocal, soft piano, 100 BPM" });
+  const out = Arrange.instrumentalVersion(compiled);
+  const model = ScoreModel.parse(out.abc);
+  assert.strictEqual(ScoreModel.voiceLine(model, "vocal").notes.length, 0);
+  // Every vocal note now in Ins; Ins keeps its own only where the vocal was silent.
+  assert.deepStrictEqual(ScoreModel.voiceLine(model, "ins").notes.map((n) => [n.u0, n.dur]), [[0, 2], [2, 2], [4, 2], [6, 2], [8, 4], [12, 4]]);
+  assert.deepStrictEqual(ScoreModel.chordLine(model).map((c) => `${c.u}:${c.name}`), ["0:C", "8:G"]);
+  assert.strictEqual(out.lyrics, "[Verse]");
+  assert.ok(!/vocal/i.test(out.style.replace("no vocals", "")) && /^Instrumental, no vocals, Turkish, soft piano/.test(out.style), out.style);
+  assert.strictEqual(out.cot, "full");
+  assert.ok(out.instrumental);
+});
+
 test("suggestChords harmonizes a melody in its key, from the notes alone", () => {
   const score = (key, vocal) => `X:1\nL:1/8\nM:4/4\nQ:1/4=100\nK:${key}\n% verse\nV: Vocal\n${vocal}\nV: Ins\n${"z8|".repeat(vocal.split("|").length - 1)}\n`;
   const names = (abc) => ScoreModel.chordLine(ScoreModel.parse(abc)).map((c) => `${c.u}:${c.name}`).join(" ");

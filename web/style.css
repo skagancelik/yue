@@ -525,7 +525,7 @@ body.has-player { padding-bottom: 88px; }
 .chord-menu { left: 0; right: auto; min-width: 260px; }
 .chord-menu .menu-item { display: block; width: 100%; }
 .btn.attention { border-color: #d9a400; color: #8a6400; background: #fff6d6; }
-.gen-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.gen-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (max-width: 520px) { .gen-row { grid-template-columns: 1fr; } }
 .seed-link { background: none; border: 0; padding: 0; font: inherit; color: inherit; text-decoration: underline dotted; cursor: pointer; }
 .seed-link:hover { color: var(--text, inherit); }

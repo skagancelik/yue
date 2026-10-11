@@ -112,6 +112,9 @@
 
         <label class="field-label" for="cfg-scale">5 · Üretim</label>
         <div class="row gen-row">
+          <label>Tür
+            <select id="gen-kind" title="Şarkı: sözler söylenir. Enstrümantal: söz gitmez, sözün söyleneceği melodiyi enstrüman çalar (eser tasarımıyla)"><option value="song">Şarkı (vokalli)</option><option value="instrumental">Enstrümantal (melodiyi enstrüman çalar)</option></select>
+          </label>
           <label>Stile bağlılık
             <select id="cfg-scale" title="YuE2 stil metnine ve söze ne kadar sıkı uysun (cfg_scale)"><option value="">Normal</option><option value="1.2">Güçlü (1.2)</option><option value="1.5">Çok güçlü (1.5)</option></select>
           </label>
@@ -120,7 +123,7 @@
           </label>
           <label>Seed <input id="seed" type="number" min="0" max="2147483647" placeholder="rastgele"></label>
         </div>
-        <div class="hint muted small">Stile bağlılık: YuE2 stil metnine ve söze ne kadar sıkı uysun; Güçlü ve Çok güçlü üretimi yavaşlatır. Seed aynı kalırsa aynı ayarlar aynı sonucu verir; bir ayarın etkisini duymak için seed'i sabitle. Her düzenlemenin seed'i kartında yazar; tıklayınca buraya gelir.</div>
+        <div class="hint muted small">Enstrümantal: söz gönderilmez; sözün söyleneceği yerlerde melodiyi enstrüman çalar, akorlar ve bölümler aynı kalır (deneysel, eser tasarımı gerekir; vokal ayırma yapılmaz). Stile bağlılık: YuE2 stil metnine ve söze ne kadar sıkı uysun; Güçlü ve Çok güçlü üretimi yavaşlatır. Seed aynı kalırsa aynı ayarlar aynı sonucu verir; bir ayarın etkisini duymak için seed'i sabitle. Her düzenlemenin seed'i kartında yazar; tıklayınca buraya gelir.</div>
 
         <details class="advanced">
           <summary>Gelişmiş</summary>

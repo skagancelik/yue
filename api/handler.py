@@ -239,6 +239,7 @@ def public_job(job):
         "created_at", "started_at", "finished_at", "duration", "source_name", "tokens", "variant",
         "upload_key", "folder_id", "source_id", "stems_status", "stems_message", "stems_error", "lyrics_start", "lyrics_layout",
         "style_base", "design_id", "design_name")}
+    out["instrumental"] = bool(job.get("instrumental"))
     out["cfg_scale"] = float(job["cfg_scale"]) if job.get("cfg_scale") is not None else None
     out["cot"] = job.get("cot") or ("melody" if job.get("score_key") else None)
     # Where the score YuE2 got came from: "prepared" (laid out in the timeline and converted by the
@@ -379,6 +380,13 @@ def create_jobs(body):
     if cfg_scale is not None and (isinstance(cfg_scale, bool) or not isinstance(cfg_scale, (int, float))
                                   or not math.isfinite(cfg_scale) or not 1 <= cfg_scale <= 3):
         raise HttpError(400, "cfg_scale 1 ile 3 arasında bir sayı olmalı")
+    # An instrumental version (no words; the melody played by the instrument voice): kept for the
+    # job card. It needs the prepared score it is made from.
+    instrumental = body.get("instrumental", False)
+    if not isinstance(instrumental, bool):
+        raise HttpError(400, "instrumental true/false olmalı")
+    if instrumental and score_text is None:
+        raise HttpError(400, "Enstrümantal yalnızca bir eser tasarımının notasıyla yapılabilir")
     seed = body.get("seed")
     if seed is None:
         seed = int.from_bytes(os.urandom(4), "big") & 0x7FFFFFFF
@@ -412,6 +420,8 @@ def create_jobs(body):
                                ContentType="text/plain; charset=utf-8", MetadataDirective="REPLACE")
         if cot == "full":
             job["cot"] = "full"
+        if instrumental:
+            job["instrumental"] = True
         if cfg_scale is not None and cfg_scale != 1:
             job["cfg_scale"] = Decimal(str(round(float(cfg_scale), 2)))
         if style_base and style_base != style:
