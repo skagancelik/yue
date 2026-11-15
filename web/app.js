@@ -469,7 +469,8 @@ async function suggestChords(design, button) {
     const list = ScoreModel.chordLine(ScoreModel.parse(out.abc)).map((c) => c.name);
     const shown = [...new Set(list)].join(", ");
     if (!confirm(`Melodiye göre ${out.count} akor önerildi (ton: ${out.key}; kullanılan akorlar: ${shown}).${had ? ` Tasarımdaki ${had} akorun yerini alır.` : ""}\n\n«${design.name}» eser tasarımına eklensin mi? Notalar, sözler ve hece yerleşimi değişmez. Zaman çizgisinde Akor şeridinde görür, çalarken duyarsın; beğenmezsen Eşlik'i "Akorsuz" yaparsın.`)) return;
-    updateDesign(await api(`/designs/${design.id}`, { method: "PATCH", body: JSON.stringify({ abc: out.abc }) }));
+    // Chords added on purpose are meant to be heard: the accompaniment follows them (cot=full).
+    updateDesign(await api(`/designs/${design.id}`, { method: "PATCH", body: JSON.stringify({ abc: out.abc, harmony: "chords" }) }));
     updateCreate();
   } catch (error) { report(error); }
   finally { button.disabled = false; }
@@ -498,7 +499,8 @@ async function borrowChords(item, design, button) {
     const tempoNote = Math.abs(mine - theirs) / theirs > 0.02 ? `\n\nDikkat: tempolar farklı (senin notan ${mine}, çıkarma ${theirs} BPM); akorlar ilerledikçe kayabilir, zaman çizgisinde kontrol et.` : "";
     const question = `v${found.k + 1} çıkarmasındaki ${out.count} akor «${design.name}» eser tasarımına eklensin mi?${had ? ` (Tasarımdaki ${had} akorun yerini alır.)` : ""}\n\nNotalar, sözler ve hece yerleşimi değişmez. Her akor çıkarmada başladığı saniyeye, en yakın sekizliğe yerleşir.${out.dropped ? ` Notanın sonundan sonraya düşen ${out.dropped} akor alınmaz.` : ""}${tempoNote}`;
     if (!confirm(question)) return;
-    updateDesign(await api(`/designs/${design.id}`, { method: "PATCH", body: JSON.stringify({ abc: out.abc }) }));
+    // Chords added on purpose are meant to be heard: the accompaniment follows them (cot=full).
+    updateDesign(await api(`/designs/${design.id}`, { method: "PATCH", body: JSON.stringify({ abc: out.abc, harmony: "chords" }) }));
     updateCreate();
   } catch (error) { report(error); }
   finally { button.disabled = false; }

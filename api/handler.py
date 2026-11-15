@@ -826,7 +826,8 @@ def public_design(design):
     out["lyrics_layout"] = design.get("lyrics_layout")
     out["tracks"] = design.get("tracks") or []
     # The accompaniment: "chords" (YuE2 plays to the score's chords, cot=full) or "free" (they are
-    # left out and YuE2 makes its own, cot=melody); None = chords when the score has any.
+    # left out and YuE2 makes its own, cot=melody); None = chords when the score has any (designs from
+    # before "free" became the default for new ones keep that meaning).
     out["harmony"] = design.get("harmony")
     out["score_url"] = presign_get(design["score_key"])
     out["score_download"] = presign_get(design["score_key"], safe_filename(design.get("name"), "abc"))
@@ -878,7 +879,8 @@ def seed_designs(sources, designs):
         design_id = hashlib.md5(f"{source['id']}:first-design".encode()).hexdigest()
         origin = "bestenin düzeltilmiş notası" if source.get("score_key") else "melodi çıkarmasından"
         design = put_design(source, "Eser tasarımı 1", origin, copy_from=score, lyrics=source.get("lyrics") or "",
-                            layout=source.get("lyrics_layout"), tracks=source.get("tracks"), design_id=design_id, only_new=True)
+                            layout=source.get("lyrics_layout"), tracks=source.get("tracks"), design_id=design_id, only_new=True,
+                            harmony="free")
         try:
             table.update_item(Key={"id": source["id"]}, ConditionExpression="attribute_exists(id)",
                               UpdateExpression="SET designs_seeded = :y", ExpressionAttributeValues={":y": True})
@@ -910,7 +912,9 @@ def design_fields(body):
 
 def create_design(source_id, body):
     """A new design of a source: from one of its melody extractions (`transcript`: version id), as a
-    copy of another design (`copy`: design id), or from a score the browser sends (`abc`)."""
+    copy of another design (`copy`: design id), or from a score the browser sends (`abc`). A new
+    design starts without chords ("free", YuE2's guide recommends melody-only for a new style); a
+    copy keeps its source's accompaniment and a score from the browser may say its own."""
     source = get_item(source_id, SOURCES, "Beste bulunamadı")
     if sum(1 for d in all_items(DESIGNS) if d.get("source_id") == source_id) >= MAX_DESIGNS:
         raise HttpError(400, f"Bir bestenin en fazla {MAX_DESIGNS} eser tasarımı olabilir")
@@ -926,7 +930,8 @@ def create_design(source_id, body):
     elif body.get("abc") is not None:
         check_score(body["abc"])
         design = put_design(source, name, validate_text(body, "origin", 200, required=False) or "zaman çizgisinden",
-                            abc=body["abc"], lyrics=fields.get("lyrics", ""), layout=fields.get("lyrics_layout"), tracks=fields.get("tracks"))
+                            abc=body["abc"], lyrics=fields.get("lyrics", ""), layout=fields.get("lyrics_layout"), tracks=fields.get("tracks"),
+                            harmony=fields["harmony"] if "harmony" in fields else "free")
     else:
         versions = transcript_versions(source)
         chosen = next((v for v in versions if v["id"] == body.get("transcript")), None) if body.get("transcript") else \
@@ -935,7 +940,7 @@ def create_design(source_id, body):
             raise HttpError(400, "Önce bestenin melodisi notaya çıkarılmalı")
         k = versions.index(chosen) + 1
         design = put_design(source, name, f"melodi çıkarması v{k}", copy_from=chosen["key"],
-                            lyrics=fields.get("lyrics", source.get("lyrics") or ""), tracks=fields.get("tracks"))
+                            lyrics=fields.get("lyrics", source.get("lyrics") or ""), tracks=fields.get("tracks"), harmony="free")
     return public_design(design)
 
 

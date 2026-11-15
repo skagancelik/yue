@@ -2140,6 +2140,8 @@ $("daw-save").addEventListener("click", async () => {
       const made = await api(`/sources/${daw.item.id}/designs`, { method: "POST", body: JSON.stringify({
         name: `${job.title} notası`, abc: daw.abc, lyrics: daw.lyrics, lyrics_layout: layoutOf(), tracks: trackList(),
         origin: `«${job.title}» düzenlemesinden`,
+        // The arrangement's accompaniment goes on: with chords if it was made with them.
+        harmony: job.cot === "full" ? "chords" : "free",
       }) });
       daw.design = made;
       daw.origin = `eser tasarımı «${made.name}»`;
