@@ -102,6 +102,19 @@ const Arrange = (() => {
     return parts.join(", ");
   }
 
+  // ---- language → style
+
+  // YuE2 expects the language in the style ("genre, instruments, vocal character, language and
+  // tempo"). Turkish lyrics are told apart by their letters; section tags do not count.
+  const LANGUAGES = /(?<!\p{L})(turkish|türkçe|turkce|english|ingilizce|İngilizce|spanish|ispanyolca|french|fransızca|german|almanca|italian|italyanca|portuguese|russian|rusça|arabic|arapça|persian|farsça|greek|yunanca|kurdish|kürtçe|azerbaijani|azerice|japanese|japonca|korean|korece|chinese|çince|mandarin|cantonese|hindi)(?!\p{L})/iu;
+  const TURKISH_LETTERS = /[çğıöşüÇĞİÖŞÜ]/;
+  const TURKISH = "Turkish";
+  const namesLanguage = (style) => LANGUAGES.test(style || "");
+  function lyricsLanguage(lyrics) {
+    const words = (lyrics || "").replace(/\[[^\]]*\]/g, " ");
+    return TURKISH_LETTERS.test(words) ? TURKISH : null;
+  }
+
   // ---- score + lyrics
 
   // Notes the lyrics sing: every note with a syllable, the empty notes between two syllables of one
@@ -325,10 +338,12 @@ const Arrange = (() => {
   // abc: the score; lyrics: the lyrics (with corrected letters); map: the note of every syllable on
   // that score (null = none; another length means "lay them out automatically"); tracks; style: the
   // style as written; chords: false to leave the score's chords out (the accompaniment is then
-  // YuE2's own). Returns { abc, lyrics, style, cot, chords, at, map, report, structure }: cot is
-  // "full" when chords go with the score (YuE2 plays to them), else "melody".
+  // YuE2's own). Returns { abc, lyrics, style, cot, chords, at, map, report, structure, language }:
+  // cot is "full" when chords go with the score (YuE2 plays to them), else "melody"; language is the
+  // language put at the head of the style (options.language, on by default: Turkish lyrics and a
+  // style naming no language), else null.
   function compile({ abc, lyrics, map, melisma = null, tracks = [], style = "", chords = true, options = {} }) {
-    const opts = { instrumentalize: true, sections: true, bpm: true, ...options };
+    const opts = { instrumentalize: true, sections: true, bpm: true, language: true, ...options };
     const report = [];
     let model = ScoreModel.parse(abc);
     const had = ScoreModel.chordLine(model).length;
@@ -389,8 +404,13 @@ const Arrange = (() => {
     const out = ScoreModel.serialize(model).text;
     tl = Timeline.build(out);
     const structure = ScoreModel.sections(model).map((run) => ({ label: run.label, from: run.from, to: run.to, sung: run.sung }));
-    const finalStyle = composeStyle(style, tracks, model, opts);
-    return { abc: out, lyrics: outLyrics, style: finalStyle, cot, chords: cot === "full" ? had : 0, at: Timeline.onsets(tl, map), map, melisma, report, structure };
+    let finalStyle = composeStyle(style, tracks, model, opts);
+    const language = opts.language && !namesLanguage(finalStyle) ? lyricsLanguage(lyrics) : null;
+    if (language) {
+      finalStyle = [language, finalStyle].filter(Boolean).join(", ");
+      report.push({ kind: "ok", text: `Stile dil eklendi: ${language} (YuE2 dili stilde bekliyor).` });
+    }
+    return { abc: out, lyrics: outLyrics, style: finalStyle, cot, chords: cot === "full" ? had : 0, at: Timeline.onsets(tl, map), map, melisma, report, structure, language };
   }
 
   // An instrumental version of a compiled request: no words are sent, the melody the lyrics would
@@ -399,10 +419,12 @@ const Arrange = (() => {
   // instrumental and loses its voice descriptions. Returns the request with its report extended.
   function instrumentalVersion(compiled) {
     // Notes about syllables do not apply: no words are sent.
-    const report = compiled.report.filter((r) => !/hece/i.test(r.text));
+    // Nor does the language compile put in the style for the words (one the user wrote stays).
+    const report = compiled.report.filter((r) => !/hece|^Stile dil eklendi/i.test(r.text));
     const moved = ScoreModel.melodyToIns(ScoreModel.parse(compiled.abc));
     const tags = compiled.lyrics.split("\n").map((line) => line.trim()).filter((line) => /^\[[^\]]+\]$/.test(line));
     const parts = compiled.style.split(",").map((p) => p.trim()).filter(Boolean);
+    if (compiled.language && parts[0] === compiled.language) parts.shift();
     const voice = /vocal|voice|singer|sung|sing|choir|rap\b|vokal|şarkıcı/i;
     const dropped = parts.filter((p) => voice.test(p));
     const style = ["Instrumental", "no vocals", ...parts.filter((p) => !voice.test(p) && !/^instrumental$|^no vocals$/i.test(p)),
@@ -410,7 +432,7 @@ const Arrange = (() => {
     report.push({ kind: "ok", text: `Enstrümantal: ${moved.moved} vokal notası enstrüman sesine geçti; söz gitmiyor, yalnız bölüm etiketleri (${tags.length}) gidiyor.` });
     if (moved.cut) report.push({ kind: "warn", text: `${moved.cut} enstrüman notası vokal melodisiyle çakıştığı için kısaltıldı ya da kaldırıldı (enstrüman sesi tek melodi çalabilir).` });
     if (dropped.length) report.push({ kind: "ok", text: `Stilden vokal tarifi çıkarıldı: ${dropped.join(", ")}.` });
-    return { ...compiled, abc: ScoreModel.serialize(moved.model).text, lyrics: tags.join("\n\n"), style, report, instrumental: true };
+    return { ...compiled, abc: ScoreModel.serialize(moved.model).text, lyrics: tags.join("\n\n"), style, report, language: null, instrumental: true };
   }
 
   // The chords of another score of the same recording (a newer melody extraction) put into this

@@ -110,6 +110,9 @@ test("compile: unsung intro goes to Ins, sections follow the lyrics, style gets 
   const again = Timeline.mapFromOnsets(tl2, out.at);
   assert.strictEqual(again.filter((n) => n != null).length, map.length);
   assert.ok(out.report.some((r) => /enstrümana verildi/.test(r.text)));
+  // The style names its language already: nothing is put in front of it.
+  assert.strictEqual(out.language, null);
+  assert.ok(!out.report.some((r) => /Stile dil eklendi/.test(r.text)));
 });
 
 test("compile takes the sections from the timeline: the score's names, not the lyrics' tags", () => {
@@ -218,6 +221,38 @@ test("instrumentalVersion sends no words: the vocal melody goes to the instrumen
   assert.ok(!/vocal/i.test(out.style.replace("no vocals", "")) && /^Instrumental, no vocals, Turkish, soft piano/.test(out.style), out.style);
   assert.strictEqual(out.cot, "full");
   assert.ok(out.instrumental);
+  // "Turkish" was the user's own word: it stays, and compile added none.
+  assert.strictEqual(compiled.language, null);
+  assert.strictEqual(compiled.style, "Turkish, warm male vocal, soft piano, 100 BPM");
+});
+
+test("compile puts the lyrics' language at the head of a style that names none (YuE2 wants it there)", () => {
+  const abc = "X:1\nL:1/8\nM:4/4\nQ:1/4=100\nK:C\n% verse\nV: Vocal\n\"C\"c2d2e2f2|\"G\"g4z4|\nV: Ins\nz4c'4|e4g4|\n";
+  const said = (out) => out.report.filter((r) => /^Stile dil eklendi/.test(r.text));
+  // (a) Turkish lyrics, a style without a language: "Turkish, " leads, and the report says so.
+  const tr = Arrange.compile({ abc, lyrics: "[Verse]\nbir iki üç dört beş", style: "warm male vocal, soft piano" });
+  assert.strictEqual(tr.style, "Turkish, warm male vocal, soft piano, 100 BPM");
+  assert.strictEqual(tr.language, "Turkish");
+  assert.deepStrictEqual(said(tr).map((r) => [r.kind, r.text]), [["ok", "Stile dil eklendi: Turkish (YuE2 dili stilde bekliyor)."]]);
+  // An empty style gets the language and the tempo.
+  assert.strictEqual(Arrange.compile({ abc, lyrics: "[Verse]\nşu üç", style: "" }).style, "Turkish, 100 BPM");
+  // (b) A style that names a language, in any case, in English or Turkish, is left alone.
+  for (const style of ["English pop, soft piano", "pop sung in ENGLISH", "türkçe pop", "İngilizce rock", "TÜRKÇE arabesk"]) {
+    const out = Arrange.compile({ abc, lyrics: "[Verse]\nbir iki üç dört beş", style });
+    assert.ok(out.style.startsWith(style) && !said(out).length && out.language === null, `${style} → ${out.style}`);
+  }
+  // (c) Lyrics without a Turkish letter (the section tags do not count), or no lyrics: nothing added.
+  for (const lyrics of ["[Verse]\nhello my love", "[Kıta]\nhello my love", ""]) {
+    const out = Arrange.compile({ abc, lyrics, style: "pop" });
+    assert.ok(out.style === "pop, 100 BPM" && !said(out).length, `${JSON.stringify(lyrics)} → ${out.style}`);
+  }
+  // (d) The instrumental version sends no words: the added language goes, the rest stays.
+  const inst = Arrange.instrumentalVersion(tr);
+  assert.strictEqual(inst.style, "Instrumental, no vocals, soft piano, 100 BPM, expressive lead instrument plays the melody");
+  assert.ok(!said(inst).length && inst.language === null);
+  // (e) options.language = false turns it off.
+  const off = Arrange.compile({ abc, lyrics: "[Verse]\nbir iki üç dört beş", style: "pop", options: { language: false } });
+  assert.ok(off.style === "pop, 100 BPM" && !said(off).length && off.language === null, off.style);
 });
 
 test("suggestChords harmonizes a melody in its key, from the notes alone", () => {
