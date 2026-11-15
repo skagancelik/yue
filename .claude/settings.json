@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node tests/web.test.js)",
+      "Bash(node --check *)",
+      "Bash(python3 -m py_compile *)",
+      "Bash(bash -n *)",
+      "Bash(python3 -m http.server *)"
+    ]
+  }
+}
