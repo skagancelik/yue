@@ -6,7 +6,13 @@ set -euo pipefail
 TURBO_REPO=https://github.com/NoizAI/YuE2-Turbo.git
 TURBO_REF=7c88813bfff9db9127f11c35b9e1b72983ded200   # pinned, bump deliberately
 NVIDIA_DRIVER=580-server-open
-MODELS="m-a-p/YuE2-3B m-a-p/YuE2-Vae m-a-p/SheetSage2 m-a-p/MERT-v2-FullSong"
+# Hugging Face revisions, pinned like TURBO_REF: bump deliberately, together with
+# YUE2_REVISION / YUE2_VAE_REVISION / YUE2_SHEETSAGE_REVISION in turbo.env.
+# MERT-v2 is the revision SheetSage2's config.json asks for (base_model_revision).
+MODELS="m-a-p/YuE2-3B@8f24312f187763b9854adeec87e437e2b03bbff1
+m-a-p/YuE2-Vae@152733a19ad43aa67e367f9b5503ef8075bb5126
+m-a-p/SheetSage2@b83c3d79a6d98bcffaf8f9ed112c90aa887887bc
+m-a-p/MERT-v2-FullSong@d8ba1c745e733b3908ce6ad16ebeb17ac7600a42"
 
 YUE=/opt/yue
 export HF_HOME=$YUE/hf
@@ -56,13 +62,15 @@ if [ "$(cat $YUE/turbo/.installed 2>/dev/null)" != "$TURBO_REF" ]; then
 fi
 
 # 3. Model weights into the HF cache on the (persistent) root volume.
-if [ ! -f $YUE/hf/.models-ok ]; then
+# The marker holds the pinned list, so a bump fetches only the files that changed
+# (the HF cache shares unchanged blobs between revisions).
+if [ "$(cat $YUE/hf/.models-ok 2>/dev/null)" != "$MODELS" ]; then
   step "Model dosyaları indiriliyor (~10.6 GB)"
   mkdir -p $YUE/hf
-  for model in $MODELS; do
-    $YUE/turbo/.venv/bin/huggingface-cli download "$model" >/dev/null
+  for pinned in $MODELS; do
+    $YUE/turbo/.venv/bin/huggingface-cli download "${pinned%@*}" --revision "${pinned#*@}" >/dev/null
   done
-  touch $YUE/hf/.models-ok
+  echo "$MODELS" > $YUE/hf/.models-ok
 fi
 
 # 4. Vocal separation. Optional: a failure only disables "Vokali ayır", never covers.

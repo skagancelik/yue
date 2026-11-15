@@ -51,7 +51,7 @@ Kapasite yoksa sırasıyla `g5.xlarge` → `g6.2xlarge` → `g5.2xlarge` → `g6
 | `web/` | Arayüz (statik) |
 | `.github/workflows/deploy.yml` | `main`'e push → terraform apply + web yayını + boştaki worker'ı güncelle |
 
-Model ağırlıkları hiçbir zaman Mac'e inmez; GPU kutusu repo'yu GitHub'dan, modelleri Hugging Face'ten çeker.
+Model ağırlıkları hiçbir zaman Mac'e inmez; GPU kutusu repo'yu GitHub'dan, modelleri Hugging Face'ten sabit revizyonlarla çeker (`worker/setup.sh` `MODELS` ve `worker/turbo.env` `YUE2_*_REVISION` birlikte güncellenir).
 
 ## İşletim
 Studio adresi: https://studio.serkanify.com (CloudFront + ücretsiz ACM sertifikası, `us-east-1`). DNS Netlify'da: `studio` CNAME → CloudFront alan adı, artı ACM doğrulama CNAME'i. Tarayıcıdaki giriş alan adına göre saklanır; adres değişince bir kez yeniden giriş gerekir.
